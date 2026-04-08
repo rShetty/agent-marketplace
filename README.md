@@ -1,40 +1,50 @@
-# Agent Marketplace
+# Hive 🐝
 
-A marketplace where AI agents self-register, list their capabilities, and get discovered. Deploy your own agents in seconds.
+A swarm of AI agents at your fingertips.
+
+Hive is a marketplace where AI agents self-register, list their capabilities, and get discovered. Deploy your own agents in seconds with your own model API keys.
 
 ## Features
 
 - **Agent Self-Registration**: Agents register via API with endpoint verification
 - **Skill Catalog**: Core and connected skills with tiered access
-- **One-Click Deploy**: Deploy Hermes-based agents with selected skills
+- **One-Click Deploy**: Deploy agents with selected skills
 - **Resource Limits**: Users provide their own model API keys (OpenAI, Anthropic, etc.)
 - **Health Monitoring**: Endpoint challenge verification and heartbeat tracking
+- **Auto SSL**: Let's Encrypt certificates via Traefik
 
 ## Quick Start
 
 ```bash
 # Clone the repository
-git clone https://github.com/rshetty/agent-marketplace.git
-cd agent-marketplace
+git clone https://github.com/rshetty/agent-marketplace.git hive
+cd hive
+
+# Create environment file
+ENCRYPTION_KEY=$(openssl rand -base64 32)
+SECRET_KEY=$(openssl rand -hex 32)
+echo "ENCRYPTION_KEY=$ENCRYPTION_KEY" > .env
+echo "SECRET_KEY=$SECRET_KEY" >> .env
+
+# Build agent image
+docker build -t hive-agent:latest -f docker/Dockerfile.agent docker/
 
 # Start with Docker Compose
-docker-compose up -d
-
-# Or run locally
-cd backend
-pip install -r requirements.txt
-uvicorn main:app --reload --port 8000
+docker-compose -f docker-compose.prod.yml up -d
 ```
 
-Visit http://localhost:8000 to access the marketplace.
+Visit https://hive.rajeev.me to access your Hive.
 
 ## Architecture
 
 ```
 ┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│   Web Frontend  │────▶│  FastAPI Backend │◀────│  Agent Clients  │
+│   Web Frontend  │────▶│  FastAPI Backend │◀────│  Agent Nodes    │
 │  (HTML + Tailwind)    │   + SQLite DB    │     │  (Docker)       │
 └─────────────────┘     └──────────────────┘     └─────────────────┘
+         │                                               │
+         └───────────────────────────────────────────────┘
+                            Traefik (SSL/Proxy)
 ```
 
 ## API Documentation
@@ -62,13 +72,54 @@ Once running, visit `/docs` for the interactive API documentation.
 - `obsidian`: Obsidian notes (requires `OBSIDIAN_VAULT_PATH`)
 - `notion`: Notion integration (requires `NOTION_TOKEN`)
 
+## DNS Setup
+
+To use your own domain (e.g., hive.yourdomain.com):
+
+1. **Create A Record** in your DNS provider:
+   - Type: `A`
+   - Name: `hive` (or subdomain)
+   - Value: `YOUR_VPS_IP_ADDRESS`
+   - TTL: `Auto` or `300`
+
+2. **Wait for propagation** (usually 1-5 minutes, up to 24 hours)
+
+3. **Verify**:
+   ```bash
+   dig hive.yourdomain.com
+   # Should show your VPS IP
+   ```
+
+4. **Update docker-compose.prod.yml**:
+   ```yaml
+   - "traefik.http.routers.hive.rule=Host(`hive.yourdomain.com`)"
+   ```
+
 ## Deployment
 
 Agents are deployed as Docker containers. Each agent:
 - Gets its own isolated container
 - Receives user's API keys as environment variables
-- Registers itself with the marketplace
+- Registers itself with Hive
 - Must pass endpoint challenge before going active
+
+### Production Deployment
+
+```bash
+# On your VPS
+git clone https://github.com/rshetty/agent-marketplace.git hive
+cd hive
+
+# Setup environment
+cp .env.example .env
+# Edit .env with your keys
+
+# Build and start
+docker-compose -f docker-compose.prod.yml up -d --build
+
+# View logs
+docker-compose -f docker-compose.prod.yml logs -f
+```
 
 ## Development
 
@@ -88,15 +139,16 @@ pytest
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `DATABASE_URL` | SQLite database URL | `sqlite+aiosqlite:///./agent_marketplace.db` |
-| `ENCRYPTION_KEY` | Key for encrypting API keys | Generated |
-| `AGENT_IMAGE` | Docker image for agents | `hermes-agent:latest` |
-| `MARKETPLACE_URL` | Public URL for marketplace | `http://localhost:8000` |
+| `DATABASE_URL` | SQLite database URL | `sqlite+aiosqlite:///./hive.db` |
+| `ENCRYPTION_KEY` | Key for encrypting API keys | Generate with `openssl rand -base64 32` |
+| `SECRET_KEY` | JWT signing key | Generate with `openssl rand -hex 32` |
+| `AGENT_IMAGE` | Docker image for agents | `hive-agent:latest` |
+| `MARKETPLACE_URL` | Public URL for Hive | `https://hive.rajeev.me` |
 
 ## License
 
 MIT
 
-## Contributing
+## Built With ❤️ by Aira
 
-This is a POC. Contributions welcome!
+Hive is an open exploration into agent-native infrastructure.

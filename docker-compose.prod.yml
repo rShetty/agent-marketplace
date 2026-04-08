@@ -36,7 +36,7 @@ services:
       - DATABASE_URL=sqlite+aiosqlite:///data/agent_marketplace.db
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:-changeme-in-production}
       - AGENT_IMAGE=agent-marketplace-agent:latest
-      - MARKETPLACE_URL=https://hive.rajeev.me
+      - MARKETPLACE_URL=${MARKETPLACE_URL:-https://hive.rajeev.me}
       - SECRET_KEY=${SECRET_KEY:-changeme-in-production}
     volumes:
       - ./data:/data

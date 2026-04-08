@@ -30,8 +30,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Agent Marketplace",
-    description="A marketplace for AI agents with self-registration and skill discovery",
+    title="Hive 🐝",
+    description="A swarm of AI agents with self-registration and skill discovery",
     version="1.0.0",
     lifespan=lifespan
 )
