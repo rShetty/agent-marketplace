@@ -54,6 +54,7 @@ async def register_agent(
     """
     Register a new agent.
     This is called by the agent itself or the deployment service.
+    Returns the FULL API key - save it immediately! It won't be shown again.
     """
     # Generate API key
     import secrets
@@ -98,13 +99,20 @@ async def register_agent(
     agent.endpoint_url = endpoint_url
     await db.commit()
     
-    return AgentRegistrationResponse(
-        agent_id=agent.id,
-        api_key=api_key,  # Only returned once!
-        health_check_endpoint=f"/agents/{agent.id}/health",
-        health_check_token=health_check_token,
-        status=agent.status
-    )
+    # Log the full API key for server-side recovery if needed
+    print(f"🔑 Agent registered: {agent.name} (ID: {agent.id})")
+    print(f"🔑 API Key (SAVE THIS!): {api_key}")
+    
+    # Return response with explicit full API key
+    response_data = {
+        "agent_id": agent.id,
+        "api_key": api_key,  # Full key - only returned once!
+        "health_check_endpoint": f"/agents/{agent.id}/health",
+        "health_check_token": health_check_token,
+        "status": agent.status
+    }
+    
+    return response_data
 
 
 @router.post("/heartbeat", response_model=AgentHeartbeatResponse)
@@ -173,4 +181,51 @@ async def update_agent_profile(
         "id": agent.id,
         "name": agent.name,
         "description": agent.description
+    }
+
+
+@router.post("/recover-credentials")
+async def recover_credentials(
+    agent_id: str,
+    health_check_token: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Recover agent credentials using health check token.
+    This is a one-time recovery - generates a NEW API key.
+    """
+    result = await db.execute(select(Agent).where(Agent.id == agent_id))
+    agent = result.scalar_one_or_none()
+    
+    if not agent:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Agent not found"
+        )
+    
+    if agent.health_check_token != health_check_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid health check token"
+        )
+    
+    # Generate new API key (old one is lost forever)
+    import secrets
+    new_api_key = f"am-{secrets.token_urlsafe(32)}"
+    agent.api_key_hash = get_password_hash(new_api_key)
+    
+    # Generate new health check token too (for security)
+    new_health_token = await generate_health_check_token()
+    agent.health_check_token = new_health_token
+    
+    await db.commit()
+    
+    print(f"🔄 Credentials recovered for agent: {agent.name} (ID: {agent.id})")
+    print(f"🔑 New API Key: {new_api_key}")
+    
+    return {
+        "agent_id": agent.id,
+        "api_key": new_api_key,
+        "health_check_token": new_health_token,
+        "message": "New credentials generated. Save these immediately - they won't be shown again!"
     }
