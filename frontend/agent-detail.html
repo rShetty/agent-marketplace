@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agent Detail - Agent Marketplace</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>body { font-family: 'Inter', sans-serif; }</style>
+</head>
+<body class="bg-gray-50 min-h-screen" x-data="agentDetailApp()">
+    <!-- Navigation -->
+    <nav class="bg-white shadow-sm border-b">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16">
+                <div class="flex items-center">
+                    <a href="/" class="flex items-center space-x-2">
+                        <div class="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center">
+                            <span class="text-white font-bold text-lg">A</span>
+                        </div>
+                        <span class="text-xl font-semibold text-gray-900">Agent Marketplace</span>
+                    </a>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <a href="/agents.html" class="text-gray-600 hover:text-gray-900">Browse</a>
+                    <template x-if="isAuthenticated">
+                        <a href="/deploy.html" class="bg-green-600 text-white px-4 py-2 rounded-md">Deploy Agent</a>
+                        <button @click="logout()" class="text-gray-600 hover:text-gray-900">Logout</button>
+                    </template>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <!-- Loading -->
+        <div x-show="loading" class="text-center py-16">
+            <div class="animate-spin w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full mx-auto"></div>
+            <p class="mt-4 text-gray-600">Loading agent...</p>
+        </div>
+
+        <!-- Not Found -->
+        <div x-show="!loading && !agent" class="text-center py-16">
+            <div class="w-16 h-16 bg-gray-200 rounded-full flex items-center justify-center mx-auto mb-4">
+                <svg class="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                </svg>
+            </div>
+            <h3 class="text-lg font-medium text-gray-900 mb-2">Agent not found</h3>
+            <a href="/agents.html" class="text-indigo-600 hover:text-indigo-800">Browse all agents &rarr;</a>
+        </div>
+
+        <!-- Agent Details -->
+        <div x-show="agent" class="space-y-6">
+            <!-- Header -->
+            <div class="bg-white rounded-lg shadow p-6">
+                <div class="flex items-start justify-between">
+                    <div>
+                        <div class="flex items-center space-x-3">
+                            <h1 class="text-3xl font-bold text-gray-900" x-text="agent.name"></h1>
+                            <span :class="statusBadgeClass(agent.status)" x-text="agent.status"></span>
+                        </div>
+                        <p class="text-gray-600 mt-2" x-text="agent.description || 'No description provided'"> </p>
+                    </div>
+                    <div class="flex items-center space-x-2" x-show="isOwner">
+                        <button @click="restartAgent()" :disabled="restarting"
+                                class="bg-gray-100 text-gray-700 px-4 py-2 rounded-md hover:bg-gray-200 disabled:opacity-50">
+                            <span x-show="!restarting">Restart</span>
+                            <span x-show="restarting">...</span>
+                        </button>
+                        <button @click="deleteAgent()" 
+                                class="bg-red-100 text-red-700 px-4 py-2 rounded-md hover:bg-red-200">
+                            Delete
+                        </button>
+                    </div>
+                </div>
+
+                <div class="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                    <div>
+                        <span class="text-gray-500">Version:</span>
+                        <span class="ml-2 font-medium" x-text="agent.version"></span>
+                    </div>
+                    <div>
+                        <span class="text-gray-500">Last Seen:</span>
+                        <span class="ml-2 font-medium" x-text="timeAgo(agent.last_seen)"></span>
+                    </div>
+                    <div>
+                        <span class="text-gray-500">Created:</span>
+                        <span class="ml-2 font-medium" x-text="new Date(agent.created_at).toLocaleDateString()"></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Skills -->
+            <div class="bg-white rounded-lg shadow p-6">
+                <h2 class="text-xl font-semibold mb-4">Skills</h2>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <template x-for="skill in agent.skills" :key="skill.id">
+                        <div class="border rounded-md p-4">
+                            <div class="flex items-center justify-between mb-2">
+                                <h3 class="font-medium" x-text="skill.skill?.display_name || skill.display_name"> </h3>
+                                <span class="text-xs px-2 py-1 rounded"
+                                      :class="skillTierClass(skill.skill?.tier || skill.tier)"
+                                      x-text="skill.skill?.tier || skill.tier"></span>
+                            </div>
+                            <p class="text-sm text-gray-600" x-text="skill.skill?.description || skill.description"> </p>
+                        </div>
+                    </template>
+                </div>
+            </div>
+
+            <!-- Logs (Owner Only) -->
+            <div x-show="isOwner && agent.container_id" class="bg-white rounded-lg shadow p-6">
+                <h2 class="text-xl font-semibold mb-4">Container Logs</h2>
+                <button @click="loadLogs()" :disabled="loadingLogs" class="mb-4 bg-indigo-600 text-white px-4 py-2 rounded-md">
+                    <span x-show="!loadingLogs">Refresh Logs</span>
+                    <span x-show="loadingLogs">Loading...</span>
+                </button>
+                <pre x-show="logs" class="bg-gray-900 text-gray-100 p-4 rounded-md text-sm font-mono overflow-x-auto max-h-96 overflow-y-auto" x-text="logs"></pre>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function agentDetailApp() {
+            return {
+                agent: null,
+                loading: true,
+                isAuthenticated: false,
+                isOwner: false,
+                restarting: false,
+                loadingLogs: false,
+                logs: '',
+                
+                init() {
+                    this.checkAuth();
+                    this.loadAgent();
+                },
+                
+                checkAuth() {
+                    const token = localStorage.getItem('token');
+                    this.isAuthenticated = !!token;
+                },
+                
+                logout() {
+                    localStorage.removeItem('token');
+                    this.isAuthenticated = false;
+                    window.location.href = '/';
+                },
+                
+                async loadAgent() {
+                    const params = new URLSearchParams(window.location.search);
+                    const agentId = params.get('id');
+                    
+                    if (!agentId) {
+                        this.loading = false;
+                        return;
+                    }
+                    
+                    try {
+                        const res = await fetch(`/api/agents/${agentId}`);
+                        if (res.ok) {
+                            this.agent = await res.json();
+                            // Check if current user is owner
+                            // We'll need to fetch current user or decode JWT
+                            // For now, assume not owner unless we have more info
+                        }
+                    } catch (e) {
+                        console.error('Failed to load agent:', e);
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+                
+                statusBadgeClass(status) {
+                    const classes = {
+                        'active': 'bg-green-100 text-green-800',
+                        'idle': 'bg-yellow-100 text-yellow-800',
+                        'offline': 'bg-gray-100 text-gray-800',
+                        'pending': 'bg-blue-100 text-blue-800',
+                        'error': 'bg-red-100 text-red-800'
+                    };
+                    return `px-3 py-1 text-sm rounded-full font-medium ${classes[status] || classes.offline}`;
+                },
+                
+                skillTierClass(tier) {
+                    const classes = {
+                        'core': 'bg-green-100 text-green-800',
+                        'connected': 'bg-blue-100 text-blue-800',
+                        'premium': 'bg-purple-100 text-purple-800'
+                    };
+                    return classes[tier] || classes.core;
+                },
+                
+                timeAgo(dateString) {
+                    if (!dateString) return 'Never';
+                    const date = new Date(dateString);
+                    const now = new Date();
+                    const seconds = Math.floor((now - date) / 1000);
+                    
+                    if (seconds < 60) return 'Just now';
+                    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+                    if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+                    return `${Math.floor(seconds / 86400)}d ago`;
+                },
+                
+                async restartAgent() {
+                    this.restarting = true;
+                    try {
+                        const token = localStorage.getItem('token');
+                        await fetch(`/api/agents/${this.agent.id}/restart`, {
+                            method: 'POST',
+                            headers: { 'Authorization': `Bearer ${token}` }
+                        });
+                        setTimeout(() => this.loadAgent(), 3000);
+                    } catch (e) {
+                        console.error('Failed to restart:', e);
+                    } finally {
+                        this.restarting = false;
+                    }
+                },
+                
+                async deleteAgent() {
+                    if (!confirm('Are you sure you want to delete this agent?')) return;
+                    
+                    try {
+                        const token = localStorage.getItem('token');
+                        await fetch(`/api/agents/${this.agent.id}`, {
+                            method: 'DELETE',
+                            headers: { 'Authorization': `Bearer ${token}` }
+                        });
+                        window.location.href = '/agents.html';
+                    } catch (e) {
+                        console.error('Failed to delete:', e);
+                    }
+                },
+                
+                async loadLogs() {
+                    this.loadingLogs = true;
+                    try {
+                        const token = localStorage.getItem('token');
+                        const res = await fetch(`/api/agents/${this.agent.id}/logs`, {
+                            headers: { 'Authorization': `Bearer ${token}` }
+                        });
+                        if (res.ok) {
+                            const data = await res.json();
+                            this.logs = data.logs;
+                        }
+                    } catch (e) {
+                        console.error('Failed to load logs:', e);
+                    } finally {
+                        this.loadingLogs = false;
+                    }
+                }
+            }
+        }
+    </script>
+</body>
+</html>

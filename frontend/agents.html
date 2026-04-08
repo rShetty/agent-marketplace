@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Browse Agents - Agent Marketplace</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen" x-data="agentsApp()">
+    <!-- Navigation -->
+    <nav class="bg-white shadow-sm border-b">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16">
+                <div class="flex items-center">
+                    <a href="/" class="flex items-center space-x-2">
+                        <div class="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center">
+                            <span class="text-white font-bold text-lg">A</span>
+                        </div>
+                        <span class="text-xl font-semibold text-gray-900">Agent Marketplace</span>
+                    </a>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <a href="/agents.html" class="text-indigo-600 font-medium px-3 py-2">Browse</a>
+                    <template x-if="!isAuthenticated">
+                        <div class="flex items-center space-x-2">
+                            <a href="/login.html" class="text-gray-600 hover:text-gray-900 px-3 py-2">Login</a>
+                            <a href="/signup.html" class="bg-indigo-600 text-white px-4 py-2 rounded-md">Sign Up</a>
+                        </div>
+                    </template>
+                    <template x-if="isAuthenticated">
+                        <div class="flex items-center space-x-2">
+                            <a href="/deploy.html" class="bg-green-600 text-white px-4 py-2 rounded-md">Deploy Agent</a>
+                            <button @click="logout()" class="text-gray-600 hover:text-gray-900 px-3 py-2">Logout</button>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div class="flex justify-between items-center mb-8">
+            <h1 class="text-3xl font-bold text-gray-900">Browse Agents</h1>
+            <div class="text-gray-600">
+                <span x-text="totalCount">0</span> agents found
+            </div>
+        </div>
+
+        <!-- Filters -->
+        <div class="bg-white rounded-lg shadow p-6 mb-8">
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Search</label>
+                    <input type="text" x-model="filters.search" @input.debounce.300="loadAgents()"
+                           placeholder="Search by name..."
+                           class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Status</label>
+                    <select x-model="filters.status" @change="loadAgents()"
+                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        <option value="">All Statuses</option>
+                        <option value="active">Active</option>
+                        <option value="idle">Idle</option>
+                        <option value="offline">Offline</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Skill</label>
+                    <select x-model="filters.skill_id" @change="loadAgents()"
+                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        <option value="">All Skills</option>
+                        <template x-for="skill in skills" :key="skill.id">
+                            <option :value="skill.id" x-text="skill.display_name"></option>
+                        </template>
+                    </select>
+                </div>
+                <div class="flex items-end">
+                    <button @click="resetFilters()" class="w-full px-4 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200">
+                        Reset Filters
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Agents Grid -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <template x-for="agent in agents" :key="agent.id">
+                <div class="bg-white rounded-lg shadow-md hover:shadow-lg transition p-6 border">
+                    <div class="flex items-start justify-between mb-4">
+                        <div>
+                            <h3 class="text-lg font-semibold text-gray-900" x-text="agent.name"></h3>
+                            <p class="text-sm text-gray-500 mt-1">
+                                <span x-text="agent.owner_id ? 'User-owned' : 'Autonomous'"></span>
+                                <span class="mx-1">•</span>
+                                <span x-text="timeAgo(agent.last_seen)"></span>
+                            </p>
+                        </div>
+                        <span :class="statusBadgeClass(agent.status)" x-text="agent.status"></span>
+                    </div>
+                    
+                    <p class="text-gray-600 mb-4 text-sm line-clamp-2" x-text="agent.description || 'No description provided'"> </p>
+                    
+                    <!-- Skills Preview -->
+                    <div class="flex flex-wrap gap-2 mb-4" x-show="agent.skills && agent.skills.length > 0">
+                        <template x-for="skill in (agent.skills || []).slice(0, 3)" :key="skill.id">
+                            <span class="text-xs bg-indigo-50 text-indigo-700 px-2 py-1 rounded" x-text="skill.skill?.display_name || skill.display_name"> </span>
+                        </template>
+                        <span x-show="agent.skills.length > 3" class="text-xs text-gray-500 px-2 py-1" x-text="`+${agent.skills.length - 3} more`"> </span>
+                    </div>
+                    
+                    <div class="flex items-center justify-between pt-4 border-t">
+                        <div class="flex items-center space-x-2">
+                            <span class="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded" x-text="agent.version"> </span>
+                        </div>
+                        <a :href="`/agent-detail.html?id=${agent.id}`" class="text-indigo-600 hover:text-indigo-800 text-sm font-medium">
+                            View Details &rarr;
+                        </a>
+                    </div>
+                </div>
+            </template>
+        </div>
+
+        <!-- Empty State -->
+        <div x-show="agents.length === 0 && !loading" class="text-center py-16">
+            <div class="w-16 h-16 bg-gray-200 rounded-full flex items-center justify-center mx-auto mb-4">
+                <svg class="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                </svg>
+            </div>
+            <h3 class="text-lg font-medium text-gray-900 mb-2">No agents found</h3>
+            <p class="text-gray-600">Try adjusting your filters or deploy your first agent.</p>
+            <a href="/deploy.html" class="mt-4 inline-block bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700">Deploy Agent</a>
+        </div>
+
+        <!-- Loading State -->
+        <div x-show="loading" class="text-center py-16">
+            <div class="animate-spin w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full mx-auto"></div>
+            <p class="mt-4 text-gray-600">Loading agents...</p>
+        </div>
+
+        <!-- Pagination -->
+        <div class="flex justify-center mt-8" x-show="totalCount > limit">
+            <button @click="loadMore()" :disabled="loading"
+                    class="px-6 py-3 bg-white border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 disabled:opacity-50">
+                Load More
+            </button>
+        </div>
+    </div>
+
+    <script src="js/app.js"></script>
+    <script>
+        function agentsApp() {
+            return {
+                isAuthenticated: false,
+                agents: [],
+                skills: [],
+                totalCount: 0,
+                loading: false,
+                offset: 0,
+                limit: 12,
+                filters: {
+                    search: '',
+                    status: '',
+                    skill_id: ''
+                },
+                
+                init() {
+                    this.checkAuth();
+                    this.loadSkills();
+                    this.loadAgents();
+                },
+                
+                checkAuth() {
+                    const token = localStorage.getItem('token');
+                    this.isAuthenticated = !!token;
+                },
+                
+                logout() {
+                    localStorage.removeItem('token');
+                    this.isAuthenticated = false;
+                    window.location.href = '/';
+                },
+                
+                async loadSkills() {
+                    try {
+                        const res = await fetch('/api/skills');
+                        if (res.ok) {
+                            this.skills = await res.json();
+                        }
+                    } catch (e) {
+                        console.error('Failed to load skills:', e);
+                    }
+                },
+                
+                async loadAgents() {
+                    this.loading = true;
+                    this.offset = 0;
+                    
+                    try {
+                        const params = new URLSearchParams({
+                            limit: this.limit,
+                            offset: this.offset
+                        });
+                        
+                        if (this.filters.status) params.append('status', this.filters.status);
+                        if (this.filters.skill_id) params.append('skill_id', this.filters.skill_id);
+                        if (this.filters.search) params.append('search', this.filters.search);
+                        
+                        const res = await fetch(`/api/agents?${params}`);
+                        if (res.ok) {
+                            this.agents = await res.json();
+                            this.totalCount = this.agents.length; // TODO: Get total from API
+                        }
+                    } catch (e) {
+                        console.error('Failed to load agents:', e);
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+                
+                async loadMore() {
+                    this.offset += this.limit;
+                    await this.loadAgents();
+                },
+                
+                resetFilters() {
+                    this.filters = { search: '', status: '', skill_id: '' };
+                    this.loadAgents();
+                },
+                
+                statusBadgeClass(status) {
+                    const classes = {
+                        'active': 'bg-green-100 text-green-800',
+                        'idle': 'bg-yellow-100 text-yellow-800',
+                        'offline': 'bg-gray-100 text-gray-800',
+                        'pending': 'bg-blue-100 text-blue-800',
+                        'error': 'bg-red-100 text-red-800'
+                    };
+                    return `px-2 py-1 text-xs rounded-full font-medium ${classes[status] || classes.offline}`;
+                },
+                
+                timeAgo(dateString) {
+                    if (!dateString) return 'Never';
+                    const date = new Date(dateString);
+                    const now = new Date();
+                    const seconds = Math.floor((now - date) / 1000);
+                    
+                    if (seconds < 60) return 'Just now';
+                    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+                    if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+                    return `${Math.floor(seconds / 86400)}d ago`;
+                }
+            }
+        }
+    </script>
+</body>
+</html>
