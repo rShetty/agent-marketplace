@@ -1,55 +1,20 @@
-version: '3.8'
-
 services:
-  traefik:
-    image: traefik:v3.0
-    command:
-      - "--api.dashboard=true"
-      - "--providers.docker=true"
-      - "--providers.docker.exposedbydefault=false"
-      - "--entrypoints.web.address=:80"
-      - "--entrypoints.websecure.address=:443"
-      - "--certificatesresolvers.letsencrypt.acme.tlschallenge=true"
-      - "--certificatesresolvers.letsencrypt.acme.email=rajeev@rajeev.me"
-      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
-      - "--entrypoints.web.http.redirections.entryPoint.to=websecure"
-      - "--entrypoints.web.http.redirections.entryPoint.scheme=https"
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ./letsencrypt:/letsencrypt
-    networks:
-      - agent-marketplace
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.traefik.rule=Host(`traefik.hive.rajeev.me`)"
-      - "traefik.http.routers.traefik.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.traefik.service=api@internal"
-      - "traefik.http.routers.traefik.middlewares=auth"
-      - "traefik.http.middlewares.auth.basicauth.users=admin:$$apr1$$H6uskkkW$$IgXLP6ewTrSuBkTrqE8wj/"
-
   marketplace:
     build: .
+    ports:
+      - "127.0.0.1:8081:8000"
     environment:
-      - DATABASE_URL=sqlite+aiosqlite:///data/agent_marketplace.db
+      - DATABASE_URL=sqlite+aiosqlite:////app/data/agent_marketplace.db
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:-changeme-in-production}
       - AGENT_IMAGE=agent-marketplace-agent:latest
       - MARKETPLACE_URL=${MARKETPLACE_URL:-https://hive.rajeev.me}
       - SECRET_KEY=${SECRET_KEY:-changeme-in-production}
     volumes:
-      - ./data:/data
+      - ./data:/app/data
       - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
     networks:
       - agent-marketplace
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.marketplace.rule=Host(`hive.rajeev.me`)"
-      - "traefik.http.routers.marketplace.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.marketplace.entrypoints=websecure"
-      - "traefik.http.services.marketplace.loadbalancer.server.port=8000"
-    restart: unless-stopped
 
 networks:
   agent-marketplace:
