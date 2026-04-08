@@ -94,8 +94,17 @@ async def agents_page():
 
 
 @app.get("/agents/{agent_id}")
-async def agent_detail_page(agent_id: str):
+async def agent_detail_page_by_id(agent_id: str):
     """Serve the agent detail page."""
+    frontend_file = os.path.join(frontend_path, "agent-detail.html")
+    if os.path.exists(frontend_file):
+        return FileResponse(frontend_file)
+    raise HTTPException(status_code=404, detail="Page not found")
+
+
+@app.get("/agent-detail")
+async def agent_detail_page():
+    """Serve the agent detail page (query param version)."""
     frontend_file = os.path.join(frontend_path, "agent-detail.html")
     if os.path.exists(frontend_file):
         return FileResponse(frontend_file)
