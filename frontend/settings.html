@@ -23,8 +23,8 @@
                     </a>
                 </div>
                 <div class="flex items-center space-x-4">
-                    <a href="/agents.html" class="text-gray-600 hover:text-gray-900">Browse</a>
-                    <a href="/deploy.html" class="bg-green-600 text-white px-4 py-2 rounded-md">Deploy Agent</a>
+                    <a href="/agents" class="text-gray-600 hover:text-gray-900">Browse</a>
+                    <a href="/deploy" class="bg-green-600 text-white px-4 py-2 rounded-md">Deploy Agent</a>
                     <button @click="logout()" class="text-gray-600 hover:text-gray-900">Logout</button>
                 </div>
             </div>
@@ -104,7 +104,7 @@
                 checkAuth() {
                     const token = localStorage.getItem('token');
                     if (!token) {
-                        window.location.href = '/login.html';
+                        window.location.href = '/login';
                     }
                 },
                 

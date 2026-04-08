@@ -23,7 +23,7 @@
                     </a>
                 </div>
                 <div class="flex items-center space-x-4">
-                    <a href="/agents.html" class="text-gray-600 hover:text-gray-900">Browse</a>
+                    <a href="/agents" class="text-gray-600 hover:text-gray-900">Browse</a>
                     <button @click="logout()" class="text-gray-600 hover:text-gray-900">Logout</button>
                 </div>
             </div>
@@ -111,7 +111,7 @@
                 <div class="bg-yellow-50 border border-yellow-200 rounded-md p-3 mb-4">
                     <p class="text-sm text-yellow-800">
                         These skills require API keys. Make sure you've added them in your 
-                        <a href="/settings.html" class="underline">settings</a>.
+                        <a href="/settings" class="underline">settings</a>.
                     </p>
                 </div>
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -208,7 +208,7 @@
                 checkAuth() {
                     const token = localStorage.getItem('token');
                     if (!token) {
-                        window.location.href = '/login.html';
+                        window.location.href = '/login';
                     }
                 },
                 

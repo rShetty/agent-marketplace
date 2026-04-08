@@ -23,9 +23,9 @@
                     </a>
                 </div>
                 <div class="flex items-center space-x-4">
-                    <a href="/agents.html" class="text-gray-600 hover:text-gray-900">Browse</a>
+                    <a href="/agents" class="text-gray-600 hover:text-gray-900">Browse</a>
                     <template x-if="isAuthenticated">
-                        <a href="/deploy.html" class="bg-green-600 text-white px-4 py-2 rounded-md">Deploy Agent</a>
+                        <a href="/deploy" class="bg-green-600 text-white px-4 py-2 rounded-md">Deploy Agent</a>
                         <button @click="logout()" class="text-gray-600 hover:text-gray-900">Logout</button>
                     </template>
                 </div>
@@ -49,7 +49,7 @@
                 </svg>
             </div>
             <h3 class="text-lg font-medium text-gray-900 mb-2">Agent not found</h3>
-            <a href="/agents.html" class="text-indigo-600 hover:text-indigo-800">Browse all agents &rarr;</a>
+            <a href="/agents" class="text-indigo-600 hover:text-indigo-800">Browse all agents &rarr;</a>
         </div>
 
         <!-- Agent Details -->
@@ -231,7 +231,7 @@
                             method: 'DELETE',
                             headers: { 'Authorization': `Bearer ${token}` }
                         });
-                        window.location.href = '/agents.html';
+                        window.location.href = '/agents';
                     } catch (e) {
                         console.error('Failed to delete:', e);
                     }

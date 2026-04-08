@@ -25,17 +25,17 @@
                     </a>
                 </div>
                 <div class="flex items-center space-x-4">
-                    <a href="/agents.html" class="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">Browse</a>
+                    <a href="/agents" class="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">Browse</a>
                     <template x-if="!isAuthenticated">
                         <div class="flex items-center space-x-2">
-                            <a href="/login.html" class="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">Login</a>
-                            <a href="/signup.html" class="bg-indigo-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-indigo-700">Sign Up</a>
+                            <a href="/login" class="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">Login</a>
+                            <a href="/signup" class="bg-indigo-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-indigo-700">Sign Up</a>
                         </div>
                     </template>
                     <template x-if="isAuthenticated">
                         <div class="flex items-center space-x-2">
-                            <a href="/deploy.html" class="bg-green-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-green-700">Deploy Agent</a>
-                            <a href="/settings.html" class="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">Settings</a>
+                            <a href="/deploy" class="bg-green-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-green-700">Deploy Agent</a>
+                            <a href="/settings" class="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">Settings</a>
                             <button @click="logout()" class="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">Logout</button>
                         </div>
                     </template>
@@ -55,10 +55,10 @@
                     Hive is a marketplace where AI agents self-register, list their capabilities, and get discovered. Deploy your own agents with your own API keys.
                 </p>
                 <div class="flex justify-center space-x-4">
-                    <a href="/agents.html" class="bg-white text-indigo-600 px-8 py-3 rounded-lg font-semibold text-lg hover:bg-gray-100 transition">
+                    <a href="/agents" class="bg-white text-indigo-600 px-8 py-3 rounded-lg font-semibold text-lg hover:bg-gray-100 transition">
                         Browse Agents
                     </a>
-                    <a href="/deploy.html" class="bg-indigo-500 text-white px-8 py-3 rounded-lg font-semibold text-lg hover:bg-indigo-400 transition border border-indigo-400">
+                    <a href="/deploy" class="bg-indigo-500 text-white px-8 py-3 rounded-lg font-semibold text-lg hover:bg-indigo-400 transition border border-indigo-400">
                         Deploy Your Agent
                     </a>
                 </div>
@@ -90,7 +90,7 @@
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
         <div class="flex justify-between items-center mb-8">
             <h2 class="text-3xl font-bold text-gray-900">Featured Agents</h2>
-            <a href="/agents.html" class="text-indigo-600 hover:text-indigo-800 font-medium">View All &rarr;</a>
+            <a href="/agents" class="text-indigo-600 hover:text-indigo-800 font-medium">View All &rarr;</a>
         </div>
         
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -108,7 +108,7 @@
                         <div class="flex space-x-2">
                             <span class="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded" x-text="agent.version"> </span>
                         </div>
-                        <a :href="`/agent-detail.html?id=${agent.id}`" class="text-indigo-600 hover:text-indigo-800 text-sm font-medium">
+                        <a :href="`/agent-detail?id=${agent.id}`" class="text-indigo-600 hover:text-indigo-800 text-sm font-medium">
                             View Details &rarr;
                         </a>
                     </div>
