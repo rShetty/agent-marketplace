@@ -1,12 +1,17 @@
 """Pydantic schemas for API requests/responses."""
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, ConfigDict
 from datetime import datetime
+
+
+class HiveBaseModel(BaseModel):
+    """Base model with protected namespace config to avoid model_* warnings."""
+    model_config = ConfigDict(protected_namespaces=())
 
 
 # ============== User Schemas ==============
 
-class UserBase(BaseModel):
+class UserBase(HiveBaseModel):
     email: EmailStr
     name: str
 
@@ -24,30 +29,30 @@ class UserResponse(UserBase):
         from_attributes = True
 
 
-class UserUpdate(BaseModel):
+class UserUpdate(HiveBaseModel):
     name: Optional[str] = None
     model_api_keys: Optional[Dict[str, str]] = None
 
 
 # ============== Auth Schemas ==============
 
-class Token(BaseModel):
+class Token(HiveBaseModel):
     access_token: str
     token_type: str
 
 
-class TokenData(BaseModel):
+class TokenData(HiveBaseModel):
     sub: Optional[str] = None
 
 
-class LoginRequest(BaseModel):
+class LoginRequest(HiveBaseModel):
     email: EmailStr
     password: str
 
 
 # ============== Skill Schemas ==============
 
-class SkillBase(BaseModel):
+class SkillBase(HiveBaseModel):
     name: str
     display_name: str
     description: str
@@ -64,13 +69,28 @@ class SkillResponse(SkillBase):
     id: str
     is_active: str
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ============== AgentSkill Schemas (defined before AgentDetailResponse) ==============
+
+class AgentSkillCreate(HiveBaseModel):
+    skill_id: str
+    config: Optional[Dict[str, str]] = None
+
+
+class AgentSkillResponse(HiveBaseModel):
+    id: str
+    skill_id: str
+    config: Optional[Dict[str, Any]] = None
+    added_at: datetime
+    
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ============== Agent Schemas ==============
 
-class AgentBase(BaseModel):
+class AgentBase(HiveBaseModel):
     name: str
     description: Optional[str] = None
 
@@ -89,15 +109,14 @@ class AgentResponse(AgentBase):
     created_at: datetime
     owner_id: Optional[str]
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AgentDetailResponse(AgentResponse):
-    skills: List["AgentSkillResponse"] = []
+    skills: List[AgentSkillResponse] = []
 
 
-class AgentRegistrationResponse(BaseModel):
+class AgentRegistrationResponse(HiveBaseModel):
     agent_id: str
     api_key: str
     health_check_endpoint: str
@@ -105,31 +124,14 @@ class AgentRegistrationResponse(BaseModel):
     status: str
 
 
-class AgentHeartbeatResponse(BaseModel):
+class AgentHeartbeatResponse(HiveBaseModel):
     status: str
     message: str
 
 
-# ============== AgentSkill Schemas ==============
-
-class AgentSkillResponse(BaseModel):
-    id: str
-    skill: SkillResponse
-    config: Optional[Dict[str, Any]] = None
-    added_at: datetime
-    
-    class Config:
-        from_attributes = True
-
-
-class AgentSkillCreate(BaseModel):
-    skill_id: str
-    config: Optional[Dict[str, str]] = None
-
-
 # ============== Health Check ==============
 
-class HealthCheckResponse(BaseModel):
+class HealthCheckResponse(HiveBaseModel):
     status: str
     token: str
     agent_id: str
@@ -138,7 +140,7 @@ class HealthCheckResponse(BaseModel):
 
 # ============== Filters ==============
 
-class AgentFilter(BaseModel):
+class AgentFilter(HiveBaseModel):
     status: Optional[str] = None
     skill_id: Optional[str] = None
     owner_id: Optional[str] = None
