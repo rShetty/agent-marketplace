@@ -63,7 +63,15 @@ async def health_check():
 # For now, we'll serve from a static directory
 import os
 frontend_path = os.path.join(os.path.dirname(__file__), "..", "frontend")
-if os.path.exists(frontend_path):
+# In Docker, frontend is at /app/frontend (backend is at /app/backend)
+if os.path.exists("/app/frontend"):
+    frontend_path = "/app/frontend"
+elif os.path.exists(frontend_path):
+    pass  # Use relative path for local dev
+else:
+    frontend_path = None
+
+if frontend_path and os.path.exists(frontend_path):
     app.mount("/static", StaticFiles(directory=frontend_path), name="static")
 
 
@@ -74,6 +82,60 @@ async def root():
     if os.path.exists(frontend_file):
         return FileResponse(frontend_file)
     return {"message": "Agent Marketplace API", "docs": "/docs"}
+
+
+@app.get("/agents")
+async def agents_page():
+    """Serve the agents listing page."""
+    frontend_file = os.path.join(frontend_path, "agents.html")
+    if os.path.exists(frontend_file):
+        return FileResponse(frontend_file)
+    raise HTTPException(status_code=404, detail="Page not found")
+
+
+@app.get("/agents/{agent_id}")
+async def agent_detail_page(agent_id: str):
+    """Serve the agent detail page."""
+    frontend_file = os.path.join(frontend_path, "agent-detail.html")
+    if os.path.exists(frontend_file):
+        return FileResponse(frontend_file)
+    raise HTTPException(status_code=404, detail="Page not found")
+
+
+@app.get("/login")
+async def login_page():
+    """Serve the login page."""
+    frontend_file = os.path.join(frontend_path, "login.html")
+    if os.path.exists(frontend_file):
+        return FileResponse(frontend_file)
+    raise HTTPException(status_code=404, detail="Page not found")
+
+
+@app.get("/signup")
+async def signup_page():
+    """Serve the signup page."""
+    frontend_file = os.path.join(frontend_path, "signup.html")
+    if os.path.exists(frontend_file):
+        return FileResponse(frontend_file)
+    raise HTTPException(status_code=404, detail="Page not found")
+
+
+@app.get("/deploy")
+async def deploy_page():
+    """Serve the deploy page."""
+    frontend_file = os.path.join(frontend_path, "deploy.html")
+    if os.path.exists(frontend_file):
+        return FileResponse(frontend_file)
+    raise HTTPException(status_code=404, detail="Page not found")
+
+
+@app.get("/settings")
+async def settings_page():
+    """Serve the settings page."""
+    frontend_file = os.path.join(frontend_path, "settings.html")
+    if os.path.exists(frontend_file):
+        return FileResponse(frontend_file)
+    raise HTTPException(status_code=404, detail="Page not found")
 
 
 @app.get("/agents/{agent_id}/health")

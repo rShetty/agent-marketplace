@@ -14,7 +14,11 @@ COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application
-COPY backend/ .
+COPY backend/ ./backend/
+COPY frontend/ ./frontend/
+
+# Set working directory to backend
+WORKDIR /app/backend
 
 # Create directory for SQLite database
 RUN mkdir -p /data
