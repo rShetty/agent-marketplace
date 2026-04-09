@@ -1,0 +1,45 @@
+name: Deploy to VPS
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -e
+
+            REPO_DIR="$HOME/hive"
+
+            # Clone if first deploy, otherwise pull
+            if [ ! -d "$REPO_DIR" ]; then
+              git clone https://github.com/rShetty/hive.git "$REPO_DIR"
+            fi
+
+            cd "$REPO_DIR"
+            git fetch origin main
+            git reset --hard origin/main
+
+            # Write env file from secrets
+            cat > .env << EOF
+            ENCRYPTION_KEY=${{ secrets.ENCRYPTION_KEY }}
+            SECRET_KEY=${{ secrets.SECRET_KEY }}
+            EOF
+
+            # Build agent image
+            docker build -t agent-marketplace-agent:latest -f docker/Dockerfile.agent docker/ || true
+
+            # Deploy
+            docker compose -f docker-compose.prod.yml up -d --build --remove-orphans
+
+            # Wait and verify health
+            sleep 5
+            curl -sf http://localhost:8081/api/health || echo "WARNING: Health check failed"
