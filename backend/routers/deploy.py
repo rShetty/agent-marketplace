@@ -154,11 +154,13 @@ async def deploy_agent(
     
     except Exception as e:
         # Cleanup on failure
+        import logging
+        logging.getLogger(__name__).error("Failed to deploy agent %s: %s", agent.id, e)
         agent.status = AgentStatus.ERROR.value
         await db.commit()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to deploy agent: {str(e)}"
+            detail="Failed to deploy agent. Check server logs for details."
         )
 
 

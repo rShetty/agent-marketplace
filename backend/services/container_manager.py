@@ -24,11 +24,25 @@ BASE_PORT = 10000
 MAX_AGENTS = 100
 AGENT_IMAGE = os.getenv("AGENT_IMAGE", "hive-agent:latest")
 
+# Track allocated ports to avoid collisions
+_allocated_ports: set[int] = set()
+
 
 def get_available_port() -> int:
-    """Get next available port for agent container."""
-    import random
-    return random.randint(BASE_PORT, BASE_PORT + MAX_AGENTS)
+    """Get next available port for agent container, avoiding collisions."""
+    import socket
+    for port in range(BASE_PORT, BASE_PORT + MAX_AGENTS):
+        if port in _allocated_ports:
+            continue
+        # Check if port is actually free on the host
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind(("127.0.0.1", port))
+                _allocated_ports.add(port)
+                return port
+            except OSError:
+                continue
+    raise RuntimeError("No available ports for agent containers")
 
 
 def ensure_network():

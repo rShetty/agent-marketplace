@@ -1,22 +1,26 @@
 """Agent-only API routes (registration, heartbeat)."""
-from datetime import datetime
-from typing import List
-from fastapi import APIRouter, Depends, HTTPException, status, Header
+import hmac
+from datetime import datetime, timezone
+from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, Request, status, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from database import get_db
-from models.agent import Agent, AgentStatus
+from models.agent import Agent, AgentStatus, AgentType
 from models.skill import Skill
 from models.agent_skill import AgentSkill
+from models.user import User
 from schemas import (
     AgentRegistrationResponse, 
     AgentHeartbeatResponse,
     AgentCreate,
+    AgentProfileUpdate,
     HealthCheckResponse
 )
-from auth import get_password_hash
+from auth import get_password_hash, get_current_active_user
 from services.health_checker import generate_health_check_token
+from services.skill_catalog import get_skill_by_name
 
 router = APIRouter(prefix="/api/agent", tags=["agent-api"])
 
@@ -49,70 +53,86 @@ async def get_agent_from_api_key(
 @router.post("/register", response_model=AgentRegistrationResponse)
 async def register_agent(
     agent_data: AgentCreate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
 ):
     """
-    Register a new agent.
-    This is called by the agent itself or the deployment service.
-    Returns the FULL API key - save it immediately! It won't be shown again.
+    Register a new agent (BYOA or managed).
+
+    External agents (BYOA) supply their own `endpoint_url` and
+    `agent_type="external"`.  Skills can be referenced by ID or by
+    machine name (e.g. "terminal", "web_extract").
+
+    Returns the FULL API key — save it immediately; it won’t be shown again.
     """
-    # Generate API key
     import secrets
+
     api_key = f"am-{secrets.token_urlsafe(32)}"
     api_key_hash = get_password_hash(api_key)
-    
-    # Generate health check token
     health_check_token = await generate_health_check_token()
-    
-    # Create agent record
+    slug = agent_data.slug or Agent.generate_slug(agent_data.name)
+
+    # Determine agent type
+    agent_type = agent_data.agent_type or AgentType.MANAGED.value
+    is_external = agent_type == AgentType.EXTERNAL.value
+
+    # For external agents an endpoint_url is required
+    if is_external and not agent_data.endpoint_url:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="endpoint_url is required for external (BYOA) agents",
+        )
+
     agent = Agent(
         name=agent_data.name,
         description=agent_data.description,
+        slug=slug,
+        avatar_url=agent_data.avatar_url,
+        capabilities=agent_data.capabilities or [],
+        tags=agent_data.tags or [],
+        agent_type=agent_type,
         api_key_hash=api_key_hash,
-        status=AgentStatus.PENDING.value,
+        endpoint_url=agent_data.endpoint_url or f"/agents/placeholder/invoke",
+        status=AgentStatus.ACTIVE.value if is_external else AgentStatus.PENDING.value,
         health_check_token=health_check_token,
-        version="1.0.0"
+        version="1.0.0",
     )
-    
+
     db.add(agent)
     await db.commit()
     await db.refresh(agent)
-    
-    # Add skills if provided
-    if agent_data.skill_ids:
-        for skill_id in agent_data.skill_ids:
-            result = await db.execute(select(Skill).where(Skill.id == skill_id))
-            skill = result.scalar_one_or_none()
-            if skill:
-                config = agent_data.skill_configs.get(skill_id, {}) if agent_data.skill_configs else {}
-                agent_skill = AgentSkill(
-                    agent_id=agent.id,
-                    skill_id=skill_id,
-                    config=config
-                )
-                db.add(agent_skill)
-        
+
+    # Fix placeholder endpoint for managed agents
+    if not is_external:
+        agent.endpoint_url = f"/agents/{agent.id}/invoke"
         await db.commit()
-    
-    # Generate endpoint URL
-    endpoint_url = f"/agents/{agent.id}/invoke"
-    agent.endpoint_url = endpoint_url
+
+    # ---- Resolve skills by ID *and* by name ----
+    resolved_skill_ids: list[str] = list(agent_data.skill_ids or [])
+
+    for skill_name in (agent_data.skill_names or []):
+        skill = await get_skill_by_name(db, skill_name)
+        if skill and skill.id not in resolved_skill_ids:
+            resolved_skill_ids.append(skill.id)
+
+    for skill_id in resolved_skill_ids:
+        result = await db.execute(select(Skill).where(Skill.id == skill_id))
+        skill = result.scalar_one_or_none()
+        if skill:
+            config = (agent_data.skill_configs or {}).get(skill_id, {})
+            db.add(AgentSkill(agent_id=agent.id, skill_id=skill_id, config=config))
+
     await db.commit()
-    
-    # Log the full API key for server-side recovery if needed
-    print(f"🔑 Agent registered: {agent.name} (ID: {agent.id})")
-    print(f"🔑 API Key (SAVE THIS!): {api_key}")
-    
-    # Return response with explicit full API key
-    response_data = {
+
+    print(f"🔑 Agent registered: {agent.name} (ID: {agent.id}, type: {agent_type})")
+
+    return {
         "agent_id": agent.id,
-        "api_key": api_key,  # Full key - only returned once!
+        "api_key": api_key,
         "health_check_endpoint": f"/agents/{agent.id}/health",
         "health_check_token": health_check_token,
-        "status": agent.status
+        "status": agent.status,
     }
-    
-    return response_data
 
 
 @router.post("/heartbeat", response_model=AgentHeartbeatResponse)
@@ -121,7 +141,7 @@ async def agent_heartbeat(
     db: AsyncSession = Depends(get_db)
 ):
     """Agent heartbeat - updates last_seen timestamp."""
-    agent.last_seen = datetime.utcnow()
+    agent.last_seen = datetime.now(timezone.utc)
     agent.status = AgentStatus.ACTIVE.value
     await db.commit()
     
@@ -148,6 +168,10 @@ async def get_agent_profile(
     return {
         "id": agent.id,
         "name": agent.name,
+        "slug": agent.slug,
+        "avatar_url": agent.avatar_url,
+        "capabilities": agent.capabilities or [],
+        "tags": agent.tags or [],
         "description": agent.description,
         "status": agent.status,
         "endpoint_url": agent.endpoint_url,
@@ -164,15 +188,13 @@ async def get_agent_profile(
 
 @router.put("/me")
 async def update_agent_profile(
-    agent_update: dict,
+    agent_update: AgentProfileUpdate,
     agent: Agent = Depends(get_agent_from_api_key),
     db: AsyncSession = Depends(get_db)
 ):
     """Update current agent's profile."""
-    if "name" in agent_update:
-        agent.name = agent_update["name"]
-    if "description" in agent_update:
-        agent.description = agent_update["description"]
+    for field, value in agent_update.model_dump(exclude_unset=True).items():
+        setattr(agent, field, value)
     
     await db.commit()
     await db.refresh(agent)
@@ -180,20 +202,47 @@ async def update_agent_profile(
     return {
         "id": agent.id,
         "name": agent.name,
+        "slug": agent.slug,
+        "avatar_url": agent.avatar_url,
+        "capabilities": agent.capabilities or [],
+        "tags": agent.tags or [],
         "description": agent.description
     }
+
+
+# ---- In-memory rate limiter for credential recovery ----
+import time as _time
+_recovery_attempts: dict[str, list[float]] = {}  # key -> list of timestamps
+_RATE_LIMIT_WINDOW = 300  # 5 minutes
+_RATE_LIMIT_MAX = 5  # max attempts per window
+
+def _check_rate_limit(key: str) -> None:
+    now = _time.time()
+    attempts = _recovery_attempts.get(key, [])
+    # Prune old entries
+    attempts = [t for t in attempts if now - t < _RATE_LIMIT_WINDOW]
+    if len(attempts) >= _RATE_LIMIT_MAX:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many recovery attempts. Try again later.",
+        )
+    attempts.append(now)
+    _recovery_attempts[key] = attempts
 
 
 @router.post("/recover-credentials")
 async def recover_credentials(
     agent_id: str,
     health_check_token: str,
+    request: Request,
     db: AsyncSession = Depends(get_db)
 ):
     """
     Recover agent credentials using health check token.
     This is a one-time recovery - generates a NEW API key.
     """
+    _check_rate_limit(f"{request.client.host}:{agent_id}")
+
     result = await db.execute(select(Agent).where(Agent.id == agent_id))
     agent = result.scalar_one_or_none()
     
@@ -203,7 +252,7 @@ async def recover_credentials(
             detail="Agent not found"
         )
     
-    if agent.health_check_token != health_check_token:
+    if not hmac.compare_digest(agent.health_check_token or "", health_check_token):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid health check token"
@@ -221,7 +270,6 @@ async def recover_credentials(
     await db.commit()
     
     print(f"🔄 Credentials recovered for agent: {agent.name} (ID: {agent.id})")
-    print(f"🔑 New API Key: {new_api_key}")
     
     return {
         "agent_id": agent.id,

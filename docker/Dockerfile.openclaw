@@ -1,0 +1,28 @@
+# Hive — OpenClaw Agent Container
+# Wraps the OpenClaw application with a Hive-compatible health endpoint.
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y \
+    curl \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install base dependencies
+RUN pip install --no-cache-dir \
+    fastapi==0.109.0 \
+    uvicorn[standard]==0.27.0 \
+    httpx==0.26.0
+
+# Copy the agent wrapper (reuses the standard agent_app + OpenClaw bootstrap)
+COPY agent_app/ /app/
+
+# Copy OpenClaw bootstrap script
+COPY openclaw_bootstrap.sh /app/openclaw_bootstrap.sh
+RUN chmod +x /app/openclaw_bootstrap.sh
+
+EXPOSE 8080
+
+# Start: first run bootstrap (pull openclaw, setup), then launch the agent
+CMD ["/bin/sh", "-c", "/app/openclaw_bootstrap.sh && python -m uvicorn main:app --host 0.0.0.0 --port 8080"]

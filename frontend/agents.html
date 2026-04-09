@@ -226,8 +226,27 @@
                 },
                 
                 async loadMore() {
+                    this.loading = true;
                     this.offset += this.limit;
-                    await this.loadAgents();
+                    try {
+                        const params = new URLSearchParams({
+                            limit: this.limit,
+                            offset: this.offset
+                        });
+                        if (this.filters.status) params.append('status', this.filters.status);
+                        if (this.filters.skill_id) params.append('skill_id', this.filters.skill_id);
+                        if (this.filters.search) params.append('search', this.filters.search);
+                        const res = await fetch(`/api/agents?${params}`);
+                        if (res.ok) {
+                            const more = await res.json();
+                            this.agents = this.agents.concat(more);
+                            this.totalCount = this.agents.length;
+                        }
+                    } catch (e) {
+                        console.error('Failed to load more agents:', e);
+                    } finally {
+                        this.loading = false;
+                    }
                 },
                 
                 resetFilters() {

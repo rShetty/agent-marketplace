@@ -16,6 +16,27 @@ from models.user import User
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
 
+@router.get("/stats/overview")
+async def get_agent_stats(db: AsyncSession = Depends(get_db)):
+    """Get marketplace statistics."""
+    # Total agents
+    total_result = await db.execute(select(func.count(Agent.id)))
+    total = total_result.scalar()
+    
+    # Active agents (online or idle)
+    active_result = await db.execute(
+        select(func.count(Agent.id))
+        .where(Agent.status.in_([AgentStatus.ACTIVE.value, AgentStatus.IDLE.value]))
+    )
+    active = active_result.scalar()
+    
+    return {
+        "total_agents": total,
+        "active_agents": active,
+        "offline_agents": total - active
+    }
+
+
 @router.get("", response_model=List[AgentResponse])
 async def list_agents(
     status: Optional[str] = None,
@@ -107,24 +128,3 @@ async def get_agent_skills(agent_id: str, db: AsyncSession = Depends(get_db)):
         }
         for askill in agent_skills
     ]
-
-
-@router.get("/stats/overview")
-async def get_agent_stats(db: AsyncSession = Depends(get_db)):
-    """Get marketplace statistics."""
-    # Total agents
-    total_result = await db.execute(select(func.count(Agent.id)))
-    total = total_result.scalar()
-    
-    # Active agents (online or idle)
-    active_result = await db.execute(
-        select(func.count(Agent.id))
-        .where(Agent.status.in_([AgentStatus.ACTIVE.value, AgentStatus.IDLE.value]))
-    )
-    active = active_result.scalar()
-    
-    return {
-        "total_agents": total,
-        "active_agents": active,
-        "offline_agents": total - active
-    }

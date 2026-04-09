@@ -12,7 +12,8 @@ services:
       - MARKETPLACE_URL=http://localhost:8000
     volumes:
       - ./data:/data
-      - /var/run/docker.sock:/var/run/docker.sock
+      # WARNING: Docker socket grants host-level access. Use a socket proxy in production.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - agent-marketplace
     restart: unless-stopped
@@ -21,14 +22,12 @@ services:
   traefik:
     image: traefik:v3.0
     command:
-      - "--api.insecure=true"
       - "--providers.docker=true"
       - "--entrypoints.web.address=:80"
     ports:
       - "80:80"
-      - "8080:8080"  # Traefik dashboard
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - agent-marketplace
     profiles:

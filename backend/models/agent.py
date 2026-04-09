@@ -1,10 +1,18 @@
 """Agent model for AI agents registered in the marketplace."""
+import re
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Text, DateTime, ForeignKey, Integer, Enum
+from sqlalchemy import Column, String, Text, DateTime, ForeignKey, Integer, Enum, JSON
 from sqlalchemy.orm import relationship
 from database import Base
 import enum
+
+
+class AgentType(str, enum.Enum):
+    """How the agent is hosted."""
+    MANAGED = "managed"      # Hive-managed container
+    EXTERNAL = "external"    # BYOA — agent runs elsewhere, registers via SDK
+    OPENCLAW = "openclaw"    # One-click OpenClaw on VPS
 
 
 class AgentStatus(str, enum.Enum):
@@ -22,6 +30,19 @@ class Agent(Base):
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     name = Column(String(100), nullable=False)
     description = Column(Text, nullable=True)
+    
+    # ---- Agentic Identity ----
+    # A unique, human-readable slug (e.g. "my-coding-agent")
+    slug = Column(String(120), unique=True, nullable=True, index=True)
+    # Optional avatar / icon URL
+    avatar_url = Column(String(500), nullable=True)
+    # Machine-readable capabilities manifest (list of capability strings)
+    capabilities = Column(JSON, default=list)
+    # Free-form tags for discovery (e.g. ["devops", "python", "openclaw"])
+    tags = Column(JSON, default=list)
+    
+    # Agent type: managed | external | openclaw
+    agent_type = Column(String(20), default=AgentType.MANAGED.value)
     
     # Owner (nullable for autonomous agents)
     owner_id = Column(String(36), ForeignKey("users.id"), nullable=True)
@@ -53,6 +74,14 @@ class Agent(Base):
     
     def __repr__(self):
         return f"<Agent {self.name} ({self.status})>"
+    
+    @staticmethod
+    def generate_slug(name: str) -> str:
+        """Generate a URL-safe slug from agent name."""
+        slug = re.sub(r"[^\w\s-]", "", name.lower())
+        slug = re.sub(r"[\s_]+", "-", slug).strip("-")
+        # Append short uuid to guarantee uniqueness
+        return f"{slug}-{uuid.uuid4().hex[:6]}"
     
     def calculate_status(self):
         """Calculate current status based on last_seen."""

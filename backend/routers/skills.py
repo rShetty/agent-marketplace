@@ -59,7 +59,7 @@ async def create_skill(
             detail=f"Skill with name '{skill_data.name}' already exists"
         )
     
-    skill = Skill(**skill_data.dict())
+    skill = Skill(**skill_data.model_dump())
     db.add(skill)
     await db.commit()
     await db.refresh(skill)

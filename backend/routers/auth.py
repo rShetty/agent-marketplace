@@ -7,7 +7,7 @@ from sqlalchemy import select
 from database import get_db
 from models.user import User
 from schemas import UserCreate, UserResponse, Token, LoginRequest
-from auth import verify_password, get_password_hash, create_access_token
+from auth import verify_password, get_password_hash, create_access_token, get_current_active_user
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 security = HTTPBearer()
@@ -67,3 +67,11 @@ async def login(login_data: LoginRequest, db: AsyncSession = Depends(get_db)):
     access_token = create_access_token(data={"sub": user.id})
     
     return {"access_token": access_token, "token_type": "bearer"}
+
+
+@router.get("/me", response_model=UserResponse)
+async def get_current_user_profile(
+    current_user: User = Depends(get_current_active_user),
+):
+    """Get the currently authenticated user's profile."""
+    return current_user

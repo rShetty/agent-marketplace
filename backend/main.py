@@ -1,5 +1,6 @@
 """Main FastAPI application."""
 import os
+import json
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, HTTPException
@@ -37,9 +38,14 @@ app = FastAPI(
 )
 
 # CORS middleware
+_allowed_origins = [
+    origin.strip()
+    for origin in os.getenv("ALLOWED_ORIGINS", "http://localhost:8000").split(",")
+    if origin.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # TODO: Restrict in production
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -61,7 +67,6 @@ async def health_check():
 
 # Static files for frontend (in production, serve built files)
 # For now, we'll serve from a static directory
-import os
 frontend_path = os.path.join(os.path.dirname(__file__), "..", "frontend")
 # In Docker, frontend is at /app/frontend (backend is at /app/backend)
 if os.path.exists("/app/frontend"):
@@ -164,7 +169,8 @@ async def agent_health_check(agent_id: str, token: str, request: Request):
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found")
         
-        if agent.health_check_token != token:
+        import hmac as _hmac
+        if not _hmac.compare_digest(agent.health_check_token or "", token):
             raise HTTPException(status_code=401, detail="Invalid token")
         
         # Get skills
@@ -236,13 +242,18 @@ async def proxy_to_agent(agent_id: str, path: str, request: Request):
                     timeout=aiohttp.ClientTimeout(total=30)
                 ) as response:
                     content = await response.read()
+                    try:
+                        body = json.loads(content) if content else {}
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        body = {"raw": content.decode(errors="replace") if content else ""}
                     return JSONResponse(
-                        content=content.decode() if content else {},
+                        content=body,
                         status_code=response.status,
-                        headers=dict(response.headers)
                     )
         except Exception as e:
-            raise HTTPException(status_code=502, detail=f"Agent unreachable: {str(e)}")
+            import logging
+            logging.getLogger(__name__).error("Agent proxy error for %s: %s", agent_id, e)
+            raise HTTPException(status_code=502, detail="Agent unreachable")
 
 
 if __name__ == "__main__":

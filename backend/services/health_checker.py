@@ -1,8 +1,9 @@
 """Agent health checking and endpoint challenge."""
+import hmac
 import uuid
 import aiohttp
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -40,8 +41,8 @@ async def ping_agent_endpoint(
             async with session.get(health_url, timeout=aiohttp.ClientTimeout(total=timeout)) as response:
                 if response.status == 200:
                     data = await response.json()
-                    # Verify token matches
-                    if data.get("token") == token:
+                    # Verify token matches (timing-safe)
+                    if hmac.compare_digest(data.get("token", ""), token):
                         return True, data
                     else:
                         return False, {"error": "Token mismatch"}
@@ -87,7 +88,7 @@ async def perform_endpoint_challenge(
         
         if success:
             agent.status = AgentStatus.ACTIVE.value
-            agent.last_health_check = datetime.utcnow()
+            agent.last_health_check = datetime.now(timezone.utc)
             await db.commit()
             return True
         

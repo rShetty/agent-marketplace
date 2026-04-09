@@ -1,6 +1,6 @@
 """Authentication utilities."""
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from jose import JWTError, jwt
 import bcrypt
@@ -13,8 +13,28 @@ from database import get_db
 from models.user import User
 
 # Security configuration
-SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-in-production")
+_DEV_MODE = os.getenv("DEV_MODE", "").lower() in ("1", "true", "yes")
+_INSECURE_DEFAULT_KEY = "your-secret-key-change-in-production"
+SECRET_KEY = os.getenv("SECRET_KEY", "")
+
+if not SECRET_KEY or SECRET_KEY == _INSECURE_DEFAULT_KEY:
+    if _DEV_MODE:
+        import warnings
+        SECRET_KEY = _INSECURE_DEFAULT_KEY
+        warnings.warn(
+            "Using insecure default SECRET_KEY (DEV_MODE). "
+            "Never use this in production!",
+            stacklevel=2,
+        )
+    else:
+        raise RuntimeError(
+            "SECRET_KEY environment variable is not set. "
+            "Set a strong random key, or set DEV_MODE=1 for local development."
+        )
+
 ALGORITHM = "HS256"
+JWT_ISSUER = "hive-marketplace"
+JWT_AUDIENCE = "hive-api"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 security = HTTPBearer()
@@ -38,11 +58,9 @@ def get_password_hash(password: str) -> str:
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     """Create a JWT access token."""
     to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.utcnow() + expires_delta
-    else:
-        expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    to_encode.update({"exp": expire})
+    now = datetime.now(timezone.utc)
+    expire = now + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    to_encode.update({"exp": expire, "iss": JWT_ISSUER, "aud": JWT_AUDIENCE})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
@@ -60,7 +78,11 @@ async def get_current_user(
     
     try:
         token = credentials.credentials
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(
+            token, SECRET_KEY, algorithms=[ALGORITHM],
+            options={"require": ["exp", "iss", "aud", "sub"]},
+            issuer=JWT_ISSUER, audience=JWT_AUDIENCE,
+        )
         user_id: str = payload.get("sub")
         if user_id is None:
             raise credentials_exception

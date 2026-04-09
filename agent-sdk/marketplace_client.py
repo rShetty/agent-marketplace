@@ -18,39 +18,55 @@ class MarketplaceClient:
         self,
         name: str,
         description: str,
-        skills: List[Dict[str, str]],
+        skill_names: Optional[List[str]] = None,
+        skill_ids: Optional[List[str]] = None,
         endpoint_url: Optional[str] = None,
-        version: str = "1.0.0"
+        agent_type: str = "managed",
+        slug: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        capabilities: Optional[List[str]] = None,
+        avatar_url: Optional[str] = None,
     ) -> Dict:
         """
         Register this agent with the marketplace.
-        
-        Args:
-            name: Display name for the agent
-            description: What the agent does
-            skills: List of skill dicts with 'name' and 'description'
-            endpoint_url: URL where agent can be reached (optional)
-            version: Agent software version
-            
+
+        For **BYOA (Bring Your Own Agent)** set ``agent_type="external"`` and
+        provide ``endpoint_url`` pointing to your running agent.
+
+        Skills can be referenced by their machine name (e.g. ``["terminal",
+        "web_extract"]``) or by ID.
+
         Returns:
-            Registration response with agent_id and api_key
+            Registration response with agent_id and api_key.
         """
+        payload: Dict = {
+            "name": name,
+            "description": description,
+            "agent_type": agent_type,
+            "skill_names": skill_names or [],
+            "skill_ids": skill_ids or [],
+        }
+        if endpoint_url:
+            payload["endpoint_url"] = endpoint_url
+        if slug:
+            payload["slug"] = slug
+        if tags:
+            payload["tags"] = tags
+        if capabilities:
+            payload["capabilities"] = capabilities
+        if avatar_url:
+            payload["avatar_url"] = avatar_url
+
         response = requests.post(
             f"{self.marketplace_url}/api/agent/register",
-            json={
-                "name": name,
-                "description": description,
-                "skill_ids": [],  # Skills are passed differently in this POC
-                "skills": skills,
-                "version": version
-            }
+            json=payload,
         )
         response.raise_for_status()
-        
+
         data = response.json()
         self.api_key = data["api_key"]
         self.agent_id = data["agent_id"]
-        
+
         return data
     
     def heartbeat(self) -> Dict:
@@ -146,25 +162,32 @@ class HealthCheckHandler:
 
 # Example usage
 if __name__ == "__main__":
-    # Example: Register a new agent
     client = MarketplaceClient("http://localhost:8000")
-    
+
+    # ------- Example 1: Managed agent (skills by name) -------
     result = client.register(
         name="My Test Agent",
         description="A simple test agent",
-        skills=[
-            {"name": "terminal", "description": "Run shell commands"},
-            {"name": "web_extract", "description": "Fetch web content"}
-        ]
+        skill_names=["terminal", "web_extract"],
     )
-    
     print(f"Registered with ID: {result['agent_id']}")
-    print(f"API Key: {result['api_key']}")
-    
+    print(f"API Key: {result['api_key'][:6]}****  (masked)")
+
+    # ------- Example 2: BYOA external agent -------
+    # byoa = MarketplaceClient("http://localhost:8000")
+    # result = byoa.register(
+    #     name="My External Bot",
+    #     description="Runs on my own infra",
+    #     agent_type="external",
+    #     endpoint_url="https://my-server.example.com/agent",
+    #     skill_names=["terminal", "github_pr"],
+    #     tags=["python", "devops"],
+    #     capabilities=["code-review", "deployment"],
+    # )
+
     # Start heartbeat
     client.start_heartbeat_loop(interval=60)
-    
-    # Keep running
+
     try:
         while True:
             time.sleep(1)

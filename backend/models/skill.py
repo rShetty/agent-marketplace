@@ -23,7 +23,7 @@ class Skill(Base):
     # e.g., ["GITHUB_TOKEN", "LINEAR_API_KEY"]
     required_env_vars = Column(JSON, default=list)
     
-    is_active = Column(String(10), default="true")
+    is_active = Column(String(10), default="true")  # Stored as string for SQLite compat
     
     # Relationships
     agent_skills = relationship("AgentSkill", back_populates="skill")

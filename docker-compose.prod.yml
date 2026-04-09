@@ -5,13 +5,14 @@ services:
       - "127.0.0.1:8081:8000"
     environment:
       - DATABASE_URL=sqlite+aiosqlite:////app/data/agent_marketplace.db
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-changeme-in-production}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:?Set ENCRYPTION_KEY before starting}
       - AGENT_IMAGE=agent-marketplace-agent:latest
       - MARKETPLACE_URL=${MARKETPLACE_URL:-https://hive.rajeev.me}
-      - SECRET_KEY=${SECRET_KEY:-changeme-in-production}
+      - SECRET_KEY=${SECRET_KEY:?Set SECRET_KEY before starting}
     volumes:
       - ./data:/app/data
-      - /var/run/docker.sock:/var/run/docker.sock
+      # WARNING: Docker socket grants host-level access. Use a socket proxy in production.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     restart: unless-stopped
     networks:
       - agent-marketplace

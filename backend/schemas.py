@@ -1,6 +1,6 @@
 """Pydantic schemas for API requests/responses."""
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, EmailStr, ConfigDict
+from pydantic import BaseModel, EmailStr, ConfigDict, field_validator
 from datetime import datetime
 
 
@@ -18,6 +18,13 @@ class UserBase(HiveBaseModel):
 
 class UserCreate(UserBase):
     password: str
+
+    @field_validator("password")
+    @classmethod
+    def password_min_length(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters")
+        return v
 
 
 class UserResponse(UserBase):
@@ -67,9 +74,16 @@ class SkillCreate(SkillBase):
 
 class SkillResponse(SkillBase):
     id: str
-    is_active: str
+    is_active: bool
     
     model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("is_active", mode="before")
+    @classmethod
+    def coerce_is_active(cls, v):
+        if isinstance(v, str):
+            return v.lower() == "true"
+        return bool(v)
 
 
 # ============== AgentSkill Schemas (defined before AgentDetailResponse) ==============
@@ -97,11 +111,25 @@ class AgentBase(HiveBaseModel):
 
 class AgentCreate(AgentBase):
     skill_ids: List[str] = []
+    skill_names: List[str] = []  # alternative: resolve skills by name
     skill_configs: Optional[Dict[str, Dict[str, str]]] = {}
+    # Agentic identity (optional at creation time)
+    slug: Optional[str] = None
+    avatar_url: Optional[str] = None
+    capabilities: List[str] = []
+    tags: List[str] = []
+    # BYOA — external agents provide their own endpoint URL
+    endpoint_url: Optional[str] = None
+    agent_type: str = "managed"  # managed | external | openclaw
 
 
 class AgentResponse(AgentBase):
     id: str
+    slug: Optional[str] = None
+    avatar_url: Optional[str] = None
+    capabilities: List[str] = []
+    tags: List[str] = []
+    agent_type: str = "managed"
     status: str
     endpoint_url: Optional[str]
     version: str
@@ -122,6 +150,15 @@ class AgentRegistrationResponse(HiveBaseModel):
     health_check_endpoint: str
     health_check_token: str
     status: str
+
+
+class AgentProfileUpdate(HiveBaseModel):
+    """Allowed fields for agent self-update. Prevents setting privileged fields."""
+    name: Optional[str] = None
+    description: Optional[str] = None
+    avatar_url: Optional[str] = None
+    capabilities: Optional[List[str]] = None
+    tags: Optional[List[str]] = None
 
 
 class AgentHeartbeatResponse(HiveBaseModel):
