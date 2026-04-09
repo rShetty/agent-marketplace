@@ -89,6 +89,14 @@ DEFAULT_SKILLS = [
         "category": "productivity",
         "required_env_vars": ["NOTION_TOKEN"]
     },
+    {
+        "name": "openclaw",
+        "display_name": "OpenClaw VPS Deploy",
+        "description": "Deploy and manage OpenClaw instances on a VPS via Docker",
+        "tier": "connected",
+        "category": "deployment",
+        "required_env_vars": ["OPENCLAW_VPS_HOST", "OPENCLAW_VPS_SSH_KEY"]
+    },
 ]
 
 

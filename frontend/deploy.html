@@ -30,166 +30,280 @@
         </div>
     </nav>
 
-    <!-- Main Content -->
     <div class="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div class="mb-8">
             <h1 class="text-3xl font-bold text-gray-900">Deploy New Agent</h1>
-            <p class="text-gray-600 mt-2">Configure and deploy your AI agent in seconds</p>
+            <p class="text-gray-600 mt-2">Choose a deployment mode and configure your agent</p>
         </div>
 
-        <!-- Progress Steps -->
-        <div class="flex items-center mb-8">
-            <div :class="`flex items-center ${step >= 1 ? 'text-indigo-600' : 'text-gray-400'}`">
-                <div class="w-8 h-8 rounded-full border-2 flex items-center justify-center font-semibold"
-                     :class="step >= 1 ? 'border-indigo-600 bg-indigo-50' : 'border-gray-300'">1</div>
-                <span class="ml-2 font-medium">Configure</span>
-            </div>
-            <div class="flex-1 h-px bg-gray-300 mx-4"></div>
-            <div :class="`flex items-center ${step >= 2 ? 'text-indigo-600' : 'text-gray-400'}`">
-                <div class="w-8 h-8 rounded-full border-2 flex items-center justify-center font-semibold"
-                     :class="step >= 2 ? 'border-indigo-600 bg-indigo-50' : 'border-gray-300'">2</div>
-                <span class="ml-2 font-medium">Skills</span>
-            </div>
-            <div class="flex-1 h-px bg-gray-300 mx-4"></div>
-            <div :class="`flex items-center ${step >= 3 ? 'text-indigo-600' : 'text-gray-400'}`">
-                <div class="w-8 h-8 rounded-full border-2 flex items-center justify-center font-semibold"
-                     :class="step >= 3 ? 'border-indigo-600 bg-indigo-50' : 'border-gray-300'">3</div>
-                <span class="ml-2 font-medium">Deploy</span>
-            </div>
-        </div>
-
-        <!-- Step 1: Configure -->
-        <div x-show="step === 1" class="bg-white rounded-lg shadow p-6">
-            <h2 class="text-xl font-semibold mb-4">Agent Configuration</h2>
-            <div class="space-y-4">
-                <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Agent Name *</label>
-                    <input type="text" x-model="agent.name" required
-                           placeholder="e.g., My Coding Assistant"
-                           class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500">
+        <!-- ============ Mode Picker ============ -->
+        <div x-show="!mode" class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <button @click="mode = 'custom'; step = 1"
+                    class="bg-white rounded-lg shadow hover:shadow-lg transition p-6 border text-left">
+                <div class="w-12 h-12 bg-indigo-100 rounded-lg flex items-center justify-center mb-4">
+                    <span class="text-2xl">🛠️</span>
                 </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Description</label>
-                    <textarea x-model="agent.description" rows="3"
-                              placeholder="What can this agent do?"
-                              class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"></textarea>
+                <h3 class="text-lg font-semibold text-gray-900 mb-2">Custom Agent</h3>
+                <p class="text-sm text-gray-600">Deploy a Hive-managed container with the skills you choose.</p>
+            </button>
+            <button @click="mode = 'byoa'; step = 1"
+                    class="bg-white rounded-lg shadow hover:shadow-lg transition p-6 border text-left">
+                <div class="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center mb-4">
+                    <span class="text-2xl">🔌</span>
                 </div>
-            </div>
-            <div class="mt-6 flex justify-end">
-                <button @click="step = 2" :disabled="!agent.name"
-                        class="bg-indigo-600 text-white px-6 py-2 rounded-md hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed">
-                    Next: Select Skills &rarr;
-                </button>
-            </div>
+                <h3 class="text-lg font-semibold text-gray-900 mb-2">Bring Your Own Agent</h3>
+                <p class="text-sm text-gray-600">Register an agent running on your own infrastructure.</p>
+            </button>
+            <button @click="mode = 'openclaw'; step = 1"
+                    class="bg-white rounded-lg shadow hover:shadow-lg transition p-6 border text-left">
+                <div class="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center mb-4">
+                    <span class="text-2xl">🐾</span>
+                </div>
+                <h3 class="text-lg font-semibold text-gray-900 mb-2">One-Click OpenClaw</h3>
+                <p class="text-sm text-gray-600">Deploy OpenClaw on your VPS with a standard skill set.</p>
+            </button>
         </div>
 
-        <!-- Step 2: Select Skills -->
-        <div x-show="step === 2" class="bg-white rounded-lg shadow p-6">
-            <h2 class="text-xl font-semibold mb-4">Select Skills</h2>
-            <p class="text-gray-600 mb-4">Choose the capabilities your agent will have</p>
+        <button x-show="mode && !deploying" @click="mode = null; step = 0; error = ''"
+                class="mb-6 text-sm text-gray-500 hover:text-gray-800">&larr; Change deployment mode</button>
 
-            <!-- Core Skills -->
-            <div class="mb-6">
-                <h3 class="font-medium text-gray-900 mb-3">Core Skills (Always Available)</h3>
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <template x-for="skill in coreSkills" :key="skill.id">
-                        <label class="flex items-start p-3 border rounded-md cursor-pointer hover:bg-gray-50"
-                               :class="selectedSkills.includes(skill.id) ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200'">
-                            <input type="checkbox" :value="skill.id" x-model="selectedSkills" class="mt-1 mr-3">
-                            <div>
-                                <div class="font-medium" x-text="skill.display_name"></div>
-                                <div class="text-sm text-gray-600" x-text="skill.description"></div>
+        <!-- ============ CUSTOM AGENT FLOW ============ -->
+        <template x-if="mode === 'custom'">
+            <div>
+                <div class="flex items-center mb-8">
+                    <template x-for="s in [{n:1,l:'Configure'},{n:2,l:'Skills'},{n:3,l:'Deploy'}]" :key="s.n">
+                        <div class="flex items-center" :class="s.n > 1 ? 'flex-1' : ''">
+                            <div x-show="s.n > 1" class="flex-1 h-px bg-gray-300 mx-4"></div>
+                            <div :class="step >= s.n ? 'text-indigo-600' : 'text-gray-400'" class="flex items-center">
+                                <div class="w-8 h-8 rounded-full border-2 flex items-center justify-center font-semibold"
+                                     :class="step >= s.n ? 'border-indigo-600 bg-indigo-50' : 'border-gray-300'" x-text="s.n"></div>
+                                <span class="ml-2 font-medium" x-text="s.l"></span>
                             </div>
-                        </label>
+                        </div>
                     </template>
                 </div>
-            </div>
-
-            <!-- Connected Skills -->
-            <div x-show="connectedSkills.length > 0" class="mb-6">
-                <h3 class="font-medium text-gray-900 mb-3">Connected Skills (Require API Keys)</h3>
-                <div class="bg-yellow-50 border border-yellow-200 rounded-md p-3 mb-4">
-                    <p class="text-sm text-yellow-800">
-                        These skills require API keys. Make sure you've added them in your 
-                        <a href="/settings" class="underline">settings</a>.
-                    </p>
+                <!-- Step 1 -->
+                <div x-show="step === 1" class="bg-white rounded-lg shadow p-6">
+                    <h2 class="text-xl font-semibold mb-4">Agent Configuration</h2>
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Agent Name *</label>
+                            <input type="text" x-model="agent.name" placeholder="e.g., My Coding Assistant"
+                                   class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                            <textarea x-model="agent.description" rows="3" placeholder="What can this agent do?"
+                                      class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"></textarea>
+                        </div>
+                    </div>
+                    <div class="mt-6 flex justify-end">
+                        <button @click="step = 2" :disabled="!agent.name"
+                                class="bg-indigo-600 text-white px-6 py-2 rounded-md hover:bg-indigo-700 disabled:opacity-50">Next: Skills &rarr;</button>
+                    </div>
                 </div>
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <template x-for="skill in connectedSkills" :key="skill.id">
-                        <label class="flex items-start p-3 border rounded-md cursor-pointer hover:bg-gray-50"
-                               :class="selectedSkills.includes(skill.id) ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200'">
-                            <input type="checkbox" :value="skill.id" x-model="selectedSkills" class="mt-1 mr-3">
-                            <div>
-                                <div class="font-medium" x-text="skill.display_name"></div>
-                                <div class="text-sm text-gray-600" x-text="skill.description"></div>
-                                <div class="text-xs text-gray-500 mt-1">
-                                    Requires: <span x-text="skill.required_env_vars.join(', ')"></span>
-                                </div>
-                            </div>
-                        </label>
-                    </template>
+                <!-- Step 2 -->
+                <div x-show="step === 2" class="bg-white rounded-lg shadow p-6">
+                    <h2 class="text-xl font-semibold mb-4">Select Skills</h2>
+                    <div class="mb-6"><h3 class="font-medium text-gray-900 mb-3">Core Skills</h3>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <template x-for="skill in coreSkills" :key="skill.id">
+                                <label class="flex items-start p-3 border rounded-md cursor-pointer hover:bg-gray-50"
+                                       :class="selectedSkills.includes(skill.id) ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200'">
+                                    <input type="checkbox" :value="skill.id" x-model="selectedSkills" class="mt-1 mr-3">
+                                    <div><div class="font-medium" x-text="skill.display_name"></div>
+                                         <div class="text-sm text-gray-600" x-text="skill.description"></div></div>
+                                </label>
+                            </template>
+                        </div>
+                    </div>
+                    <div x-show="connectedSkills.length > 0" class="mb-6"><h3 class="font-medium text-gray-900 mb-3">Connected Skills</h3>
+                        <div class="bg-yellow-50 border border-yellow-200 rounded-md p-3 mb-4">
+                            <p class="text-sm text-yellow-800">Require API keys in <a href="/settings" class="underline">Settings</a>.</p>
+                        </div>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <template x-for="skill in connectedSkills" :key="skill.id">
+                                <label class="flex items-start p-3 border rounded-md cursor-pointer hover:bg-gray-50"
+                                       :class="selectedSkills.includes(skill.id) ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200'">
+                                    <input type="checkbox" :value="skill.id" x-model="selectedSkills" class="mt-1 mr-3">
+                                    <div><div class="font-medium" x-text="skill.display_name"></div>
+                                         <div class="text-sm text-gray-600" x-text="skill.description"></div>
+                                         <div class="text-xs text-gray-500 mt-1">Requires: <span x-text="skill.required_env_vars.join(', ')"></span></div></div>
+                                </label>
+                            </template>
+                        </div>
+                    </div>
+                    <div class="mt-6 flex justify-between">
+                        <button @click="step = 1" class="text-gray-600 px-4 py-2">&larr; Back</button>
+                        <button @click="step = 3" :disabled="selectedSkills.length === 0"
+                                class="bg-indigo-600 text-white px-6 py-2 rounded-md hover:bg-indigo-700 disabled:opacity-50">Next: Deploy &rarr;</button>
+                    </div>
+                </div>
+                <!-- Step 3 -->
+                <div x-show="step === 3" class="bg-white rounded-lg shadow p-6">
+                    <h2 class="text-xl font-semibold mb-4">Review & Deploy</h2>
+                    <div class="bg-gray-50 rounded-md p-4 mb-6">
+                        <p><span class="text-gray-600">Name:</span> <span x-text="agent.name" class="font-medium"></span></p>
+                        <p><span class="text-gray-600">Description:</span> <span x-text="agent.description || 'None'"></span></p>
+                    </div>
+                    <div class="bg-gray-50 rounded-md p-4 mb-6">
+                        <h3 class="font-medium text-gray-900 mb-2">Skills (<span x-text="selectedSkills.length"></span>)</h3>
+                        <div class="flex flex-wrap gap-2">
+                            <template x-for="sid in selectedSkills" :key="sid">
+                                <span class="bg-indigo-100 text-indigo-800 px-3 py-1 rounded-full text-sm" x-text="getSkillName(sid)"></span>
+                            </template>
+                        </div>
+                    </div>
+                    <div x-show="deploying" class="mb-6">
+                        <div class="flex items-center mb-2">
+                            <div class="animate-spin w-5 h-5 border-2 border-indigo-600 border-t-transparent rounded-full mr-3"></div>
+                            <span class="font-medium" x-text="deployStatus"></span>
+                        </div>
+                        <div class="w-full bg-gray-200 rounded-full h-2">
+                            <div class="bg-indigo-600 h-2 rounded-full transition-all" :style="`width: ${deployProgress}%`"></div>
+                        </div>
+                    </div>
+                    <div x-show="error" class="mb-6 p-4 bg-red-50 text-red-700 rounded-md" x-text="error"></div>
+                    <div class="mt-6 flex justify-between">
+                        <button @click="step = 2" class="text-gray-600 px-4 py-2" :disabled="deploying">&larr; Back</button>
+                        <button @click="deployCustom()" :disabled="deploying"
+                                class="bg-green-600 text-white px-8 py-3 rounded-md hover:bg-green-700 font-medium disabled:opacity-50">Deploy Agent</button>
+                    </div>
                 </div>
             </div>
+        </template>
 
-            <div class="mt-6 flex justify-between">
-                <button @click="step = 1" class="text-gray-600 hover:text-gray-900 px-4 py-2">
-                    &larr; Back
-                </button>
-                <button @click="step = 3" :disabled="selectedSkills.length === 0"
-                        class="bg-indigo-600 text-white px-6 py-2 rounded-md hover:bg-indigo-700 disabled:opacity-50">
-                    Next: Review & Deploy &rarr;
-                </button>
-            </div>
-        </div>
-
-        <!-- Step 3: Review & Deploy -->
-        <div x-show="step === 3" class="bg-white rounded-lg shadow p-6">
-            <h2 class="text-xl font-semibold mb-4">Review & Deploy</h2>
-
-            <div class="bg-gray-50 rounded-md p-4 mb-6">
-                <h3 class="font-medium text-gray-900 mb-2">Configuration</h3>
-                <p><span class="text-gray-600">Name:</span> <span x-text="agent.name" class="font-medium"></span></p>
-                <p><span class="text-gray-600">Description:</span> <span x-text="agent.description || 'None'"></span></p>
-            </div>
-
-            <div class="bg-gray-50 rounded-md p-4 mb-6">
-                <h3 class="font-medium text-gray-900 mb-2">Selected Skills (<span x-text="selectedSkills.length"></span>)</h3>
-                <div class="flex flex-wrap gap-2">
-                    <template x-for="skillId in selectedSkills" :key="skillId">
-                        <span class="bg-indigo-100 text-indigo-800 px-3 py-1 rounded-full text-sm"
-                              x-text="getSkillName(skillId)"></span>
-                    </template>
+        <!-- ============ BYOA FLOW ============ -->
+        <template x-if="mode === 'byoa'">
+            <div class="bg-white rounded-lg shadow p-6">
+                <h2 class="text-xl font-semibold mb-2">Register External Agent (BYOA)</h2>
+                <p class="text-gray-600 mb-6 text-sm">Your agent is already running. Register it so others can discover it.</p>
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Agent Name *</label>
+                        <input type="text" x-model="agent.name" placeholder="My External Agent"
+                               class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Endpoint URL *</label>
+                        <input type="url" x-model="byoa.endpoint_url" placeholder="https://my-server.example.com/agent"
+                               class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        <p class="text-xs text-gray-500 mt-1">Public URL where your agent accepts requests</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                        <textarea x-model="agent.description" rows="2" placeholder="What does your agent do?"
+                                  class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"></textarea>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Skills (comma-separated names)</label>
+                        <input type="text" x-model="byoa.skillNamesRaw" placeholder="terminal, web_extract, github_pr"
+                               class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Tags (comma-separated)</label>
+                        <input type="text" x-model="byoa.tagsRaw" placeholder="python, devops"
+                               class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    </div>
+                </div>
+                <div x-show="deploying" class="mt-6 flex items-center">
+                    <div class="animate-spin w-5 h-5 border-2 border-green-600 border-t-transparent rounded-full mr-3"></div>
+                    <span class="font-medium">Registering...</span>
+                </div>
+                <div x-show="byoaResult" class="mt-4 p-4 bg-green-50 text-green-800 rounded-md text-sm">
+                    <p class="font-semibold mb-1">Agent registered!</p>
+                    <p>ID: <span x-text="byoaResult?.agent_id" class="font-mono"></span></p>
+                    <p>API Key: <span x-text="byoaResult?.api_key" class="font-mono break-all"></span></p>
+                    <p class="text-xs mt-2 text-green-700">Save this API key now — it won't be shown again.</p>
+                </div>
+                <div x-show="error" class="mt-4 p-4 bg-red-50 text-red-700 rounded-md" x-text="error"></div>
+                <div class="mt-6 flex justify-end">
+                    <button @click="deployBYOA()" :disabled="deploying || !agent.name || !byoa.endpoint_url"
+                            class="bg-green-600 text-white px-8 py-3 rounded-md hover:bg-green-700 font-medium disabled:opacity-50">Register Agent</button>
                 </div>
             </div>
+        </template>
 
-            <div x-show="deploying" class="mb-6">
-                <div class="flex items-center mb-2">
-                    <div class="animate-spin w-5 h-5 border-2 border-indigo-600 border-t-transparent rounded-full mr-3"></div>
-                    <span class="font-medium" x-text="deployStatus"></span>
+        <!-- ============ ONE-CLICK OPENCLAW FLOW ============ -->
+        <template x-if="mode === 'openclaw'">
+            <div class="bg-white rounded-lg shadow p-6">
+                <h2 class="text-xl font-semibold mb-2">One-Click OpenClaw Deploy</h2>
+                <p class="text-gray-600 mb-4 text-sm">Deploys OpenClaw on your VPS. Default skills: <span class="font-mono text-xs">terminal, file_ops, web_extract, planning, code_review</span>.</p>
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Agent Name *</label>
+                        <input type="text" x-model="agent.name" placeholder="My OpenClaw Agent"
+                               class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">VPS Host *</label>
+                        <input type="text" x-model="openclaw.vps_host" placeholder="123.45.67.89"
+                               class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        <p class="text-xs text-gray-500 mt-1">SSH key must be configured in <a href="/settings" class="underline">Settings</a>.</p>
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">SSH User</label>
+                            <input type="text" x-model="openclaw.ssh_user" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Port</label>
+                            <input type="number" x-model.number="openclaw.port" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Additional Skills</label>
+                        <div class="grid grid-cols-2 gap-2">
+                            <template x-for="skill in skills.filter(s => !openclawDefaults.includes(s.name))" :key="skill.id">
+                                <label class="flex items-center p-2 border rounded-md cursor-pointer hover:bg-gray-50 text-sm"
+                                       :class="openclaw.extraSkills.includes(skill.name) ? 'border-purple-500 bg-purple-50' : 'border-gray-200'">
+                                    <input type="checkbox" :value="skill.name" x-model="openclaw.extraSkills" class="mr-2">
+                                    <span x-text="skill.display_name"></span>
+                                </label>
+                            </template>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Tags (comma-separated)</label>
+                        <input type="text" x-model="openclaw.tagsRaw" placeholder="openclaw, production"
+                               class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    </div>
                 </div>
-                <div class="w-full bg-gray-200 rounded-full h-2">
-                    <div class="bg-indigo-600 h-2 rounded-full transition-all" :style="`width: ${deployProgress}%`"></div>
+                <div class="mt-6 bg-purple-50 rounded-md p-4">
+                    <h3 class="font-medium text-purple-900 mb-2 text-sm">Skills to be installed</h3>
+                    <div class="flex flex-wrap gap-2">
+                        <template x-for="s in openclawDefaults" :key="s">
+                            <span class="bg-purple-100 text-purple-800 px-3 py-1 rounded-full text-xs" x-text="s"></span>
+                        </template>
+                        <template x-for="s in openclaw.extraSkills" :key="s">
+                            <span class="bg-indigo-100 text-indigo-800 px-3 py-1 rounded-full text-xs" x-text="s + ' (extra)'"></span>
+                        </template>
+                    </div>
+                </div>
+                <div x-show="deploying" class="mt-6">
+                    <div class="flex items-center mb-2">
+                        <div class="animate-spin w-5 h-5 border-2 border-purple-600 border-t-transparent rounded-full mr-3"></div>
+                        <span class="font-medium" x-text="deployStatus"></span>
+                    </div>
+                    <div class="w-full bg-gray-200 rounded-full h-2">
+                        <div class="bg-purple-600 h-2 rounded-full transition-all" :style="`width: ${deployProgress}%`"></div>
+                    </div>
+                </div>
+                <div x-show="error" class="mt-4 p-4 bg-red-50 text-red-700 rounded-md" x-text="error"></div>
+                <div class="mt-6 flex justify-end">
+                    <button @click="deployOpenClaw()" :disabled="deploying || !agent.name || !openclaw.vps_host"
+                            class="bg-purple-600 text-white px-8 py-3 rounded-md hover:bg-purple-700 font-medium disabled:opacity-50">Deploy OpenClaw</button>
                 </div>
             </div>
-
-            <div x-show="error" class="mb-6 p-4 bg-red-50 text-red-700 rounded-md" x-text="error"></div>
-
-            <div class="mt-6 flex justify-between">
-                <button @click="step = 2" class="text-gray-600 hover:text-gray-900 px-4 py-2" :disabled="deploying">
-                    &larr; Back
-                </button>
-                <button @click="deploy()" :disabled="deploying"
-                        class="bg-green-600 text-white px-8 py-3 rounded-md hover:bg-green-700 font-medium disabled:opacity-50">
-                    Deploy Agent
-                </button>
-            </div>
-        </div>
+        </template>
     </div>
 
+    <script src="js/app.js"></script>
     <script>
         function deployApp() {
             return {
-                step: 1,
+                mode: null,
+                step: 0,
                 agent: { name: '', description: '' },
                 skills: [],
                 selectedSkills: [],
@@ -197,122 +311,88 @@
                 deployStatus: '',
                 deployProgress: 0,
                 error: '',
-                
-                init() {
-                    this.checkAuth();
-                    this.loadSkills();
-                    // Pre-select some core skills
-                    this.selectedSkills = [];
-                },
-                
-                checkAuth() {
-                    const token = localStorage.getItem('token');
-                    if (!token) {
-                        window.location.href = '/login';
-                    }
-                },
-                
-                logout() {
-                    localStorage.removeItem('token');
-                    window.location.href = '/';
-                },
-                
+                byoa: { endpoint_url: '', skillNamesRaw: '', tagsRaw: '' },
+                byoaResult: null,
+                openclawDefaults: ['terminal','file_ops','web_extract','planning','code_review'],
+                openclaw: { vps_host: '', ssh_user: 'root', port: 9000, extraSkills: [], tagsRaw: '' },
+
+                init() { this.checkAuth(); this.loadSkills(); },
+                checkAuth() { if (!localStorage.getItem('token')) window.location.href = '/login'; },
+                logout() { localStorage.removeItem('token'); window.location.href = '/'; },
+
                 async loadSkills() {
+                    try { const r = await fetch('/api/skills'); if (r.ok) this.skills = await r.json(); }
+                    catch (e) { console.error('Failed to load skills:', e); }
+                },
+                get coreSkills()      { return this.skills.filter(s => s.tier === 'core'); },
+                get connectedSkills() { return this.skills.filter(s => s.tier === 'connected'); },
+                getSkillName(id) { const s = this.skills.find(s => s.id === id); return s ? s.display_name : id; },
+
+                _authHeaders() {
+                    return { 'Content-Type':'application/json', 'Authorization':`Bearer ${localStorage.getItem('token')}` };
+                },
+
+                // ---- Custom deploy ----
+                async deployCustom() {
+                    this.deploying = true; this.error = '';
+                    this.deployStatus = 'Creating agent...'; this.deployProgress = 20;
                     try {
-                        const res = await fetch('/api/skills');
-                        if (res.ok) {
-                            this.skills = await res.json();
-                        }
-                    } catch (e) {
-                        console.error('Failed to load skills:', e);
-                    }
-                },
-                
-                get coreSkills() {
-                    return this.skills.filter(s => s.tier === 'core');
-                },
-                
-                get connectedSkills() {
-                    return this.skills.filter(s => s.tier === 'connected');
-                },
-                
-                getSkillName(skillId) {
-                    const skill = this.skills.find(s => s.id === skillId);
-                    return skill ? skill.display_name : skillId;
-                },
-                
-                async deploy() {
-                    this.deploying = true;
-                    this.error = '';
-                    this.deployStatus = 'Creating agent...';
-                    this.deployProgress = 20;
-                    
-                    try {
-                        const token = localStorage.getItem('token');
-                        
                         const res = await fetch('/api/agents/deploy', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                                'Authorization': `Bearer ${token}`
-                            },
-                            body: JSON.stringify({
-                                name: this.agent.name,
-                                description: this.agent.description,
-                                skill_ids: this.selectedSkills,
-                                skill_configs: {}
-                            })
+                            method:'POST', headers: this._authHeaders(),
+                            body: JSON.stringify({ name: this.agent.name, description: this.agent.description, skill_ids: this.selectedSkills, skill_configs: {} })
                         });
-                        
                         if (res.ok) {
-                            this.deployStatus = 'Starting container...';
-                            this.deployProgress = 60;
-                            
                             const agent = await res.json();
-                            
-                            // Poll for status
-                            this.deployStatus = 'Verifying endpoint...';
-                            this.deployProgress = 80;
-                            
-                            let attempts = 0;
-                            const checkStatus = async () => {
-                                const statusRes = await fetch(`/api/agents/${agent.id}`);
-                                if (statusRes.ok) {
-                                    const data = await statusRes.json();
-                                    if (data.status === 'active') {
-                                        this.deployProgress = 100;
-                                        this.deployStatus = 'Deployed successfully!';
-                                        setTimeout(() => {
-                                            window.location.href = `/agent-detail.html?id=${agent.id}`;
-                                        }, 1000);
-                                        return;
-                                    } else if (data.status === 'error') {
-                                        this.error = 'Deployment failed. Please check logs.';
-                                        this.deploying = false;
-                                        return;
-                                    }
-                                }
-                                
-                                attempts++;
-                                if (attempts < 30) {
-                                    setTimeout(checkStatus, 2000);
-                                } else {
-                                    this.error = 'Deployment is taking longer than expected. Check the agent details page.';
-                                    this.deploying = false;
-                                    window.location.href = `/agent-detail.html?id=${agent.id}`;
-                                }
-                            };
-                            
-                            setTimeout(checkStatus, 3000);
-                        } else {
+                            this.deployStatus = 'Verifying...'; this.deployProgress = 70;
+                            this._pollStatus(agent.id);
+                        } else { const d = await res.json(); this.error = d.detail || 'Failed'; this.deploying = false; }
+                    } catch(e) { this.error = 'Network error.'; this.deploying = false; }
+                },
+                _pollStatus(id, n=0) {
+                    setTimeout(async () => {
+                        try {
+                            const r = await fetch(`/api/agents/${id}`);
+                            if (r.ok) { const d = await r.json();
+                                if (d.status==='active') { this.deployProgress=100; this.deployStatus='Deployed!'; setTimeout(()=>{ window.location.href=`/agent-detail?id=${id}`; },1000); return; }
+                                if (d.status==='error') { this.error='Deployment failed.'; this.deploying=false; return; }
+                            }
+                        } catch(_) {}
+                        if (n<30) this._pollStatus(id,n+1); else { this.error='Taking too long.'; this.deploying=false; }
+                    }, 2000);
+                },
+
+                // ---- BYOA ----
+                async deployBYOA() {
+                    this.deploying = true; this.error = ''; this.byoaResult = null;
+                    const skillNames = this.byoa.skillNamesRaw.split(',').map(s=>s.trim()).filter(Boolean);
+                    const tags = this.byoa.tagsRaw.split(',').map(s=>s.trim()).filter(Boolean);
+                    try {
+                        const res = await fetch('/api/agent/register', {
+                            method:'POST', headers:{'Content-Type':'application/json'},
+                            body: JSON.stringify({ name:this.agent.name, description:this.agent.description, agent_type:'external', endpoint_url:this.byoa.endpoint_url, skill_names:skillNames, tags:tags })
+                        });
+                        if (res.ok) this.byoaResult = await res.json();
+                        else { const d = await res.json(); this.error = d.detail || 'Registration failed'; }
+                    } catch(e) { this.error = 'Network error.'; }
+                    finally { this.deploying = false; }
+                },
+
+                // ---- OpenClaw ----
+                async deployOpenClaw() {
+                    this.deploying = true; this.error = '';
+                    this.deployStatus = 'Deploying OpenClaw to VPS...'; this.deployProgress = 30;
+                    const tags = this.openclaw.tagsRaw.split(',').map(s=>s.trim()).filter(Boolean);
+                    try {
+                        const res = await fetch('/api/agents/deploy-openclaw', {
+                            method:'POST', headers: this._authHeaders(),
+                            body: JSON.stringify({ agent_name:this.agent.name, vps_host:this.openclaw.vps_host, ssh_user:this.openclaw.ssh_user||'root', port:this.openclaw.port||9000, extra_skill_names:this.openclaw.extraSkills, tags:tags })
+                        });
+                        if (res.ok) {
                             const data = await res.json();
-                            this.error = data.detail || 'Deployment failed';
-                            this.deploying = false;
-                        }
-                    } catch (e) {
-                        this.error = 'Network error. Please try again.';
-                        this.deploying = false;
-                    }
+                            this.deployProgress = 100; this.deployStatus = `Deployed! URL: ${data.url}`;
+                            setTimeout(()=>{ window.location.href = `/agent-detail?id=${data.agent_id}`; }, 2000);
+                        } else { const d = await res.json(); this.error = d.detail || 'Failed'; this.deploying = false; }
+                    } catch(e) { this.error = 'Network error.'; this.deploying = false; }
                 }
             }
         }

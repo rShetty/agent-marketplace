@@ -1,9 +1,10 @@
 """Agent deployment routes for users."""
-from typing import List
+from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
+from schemas import HiveBaseModel
 
 from database import get_db
 from models.agent import Agent, AgentStatus
@@ -21,8 +22,26 @@ import json
 
 router = APIRouter(prefix="/api", tags=["deploy"])
 
-# Encryption key for API keys (should be loaded from env in production)
-ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY", Fernet.generate_key())
+# Encryption key for API keys — MUST be set in production.
+# Generating a fallback for local dev only; data encrypted with this key
+# becomes unreadable if the process restarts.
+_env_key = os.getenv("ENCRYPTION_KEY")
+if not _env_key:
+    import warnings
+    warnings.warn(
+        "ENCRYPTION_KEY not set — generating ephemeral key. "
+        "Encrypted data will be lost on restart. Set ENCRYPTION_KEY in production.",
+        stacklevel=2,
+    )
+    ENCRYPTION_KEY = Fernet.generate_key()
+else:
+    # Fernet requires url-safe base64 key; accept raw or already-encoded
+    import base64
+    try:
+        ENCRYPTION_KEY = _env_key.encode() if isinstance(_env_key, str) else _env_key
+        Fernet(ENCRYPTION_KEY)  # validate
+    except Exception:
+        ENCRYPTION_KEY = base64.urlsafe_b64encode(_env_key.encode().ljust(32, b'\0')[:32])
 fernet = Fernet(ENCRYPTION_KEY)
 
 
@@ -79,9 +98,15 @@ async def deploy_agent(
     api_key = f"am-{secrets.token_urlsafe(32)}"
     api_key_hash = get_password_hash(api_key)
     
+    slug = agent_data.slug or Agent.generate_slug(agent_data.name)
+    
     agent = Agent(
         name=agent_data.name,
         description=agent_data.description,
+        slug=slug,
+        avatar_url=agent_data.avatar_url,
+        capabilities=agent_data.capabilities or [],
+        tags=agent_data.tags or [],
         owner_id=current_user.id,
         api_key_hash=api_key_hash,
         status=AgentStatus.PENDING.value,
@@ -121,9 +146,9 @@ async def deploy_agent(
         
         await db.commit()
         
-        # Trigger endpoint challenge (async - don't wait)
+        # Trigger endpoint challenge in a background task with its own session
         import asyncio
-        asyncio.create_task(perform_endpoint_challenge(db, agent.id))
+        asyncio.create_task(_run_endpoint_challenge(agent.id))
         
         return agent
     
@@ -135,6 +160,13 @@ async def deploy_agent(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to deploy agent: {str(e)}"
         )
+
+
+async def _run_endpoint_challenge(agent_id: str):
+    """Run endpoint challenge with an independent DB session."""
+    from database import async_session_maker
+    async with async_session_maker() as session:
+        await perform_endpoint_challenge(session, agent_id)
 
 
 @router.delete("/agents/{agent_id}")
@@ -206,7 +238,7 @@ async def restart_agent(
             
             # Trigger new challenge
             import asyncio
-            asyncio.create_task(perform_endpoint_challenge(db, agent.id))
+            asyncio.create_task(_run_endpoint_challenge(agent.id))
             
             return {"message": "Agent restart initiated"}
     
@@ -248,6 +280,145 @@ async def get_agent_logs(
     return {"logs": "No container found"}
 
 
+# ============ OpenClaw VPS Deployment ============
+
+# Standard skills automatically attached to every OpenClaw agent.
+# Users can add more during setup.
+OPENCLAW_DEFAULT_SKILL_NAMES = [
+    "terminal",
+    "file_ops",
+    "web_extract",
+    "planning",
+    "code_review",
+]
+
+
+class OpenClawDeployRequest(HiveBaseModel):
+    """Request body for one-click OpenClaw deployment."""
+    agent_name: str
+    vps_host: str
+    ssh_user: str = "root"
+    ssh_port: int = 22
+    port: int = 9000
+    extra_env: Optional[dict] = None
+    tags: List[str] = []
+    # Users can add extra skills on top of the defaults
+    extra_skill_names: List[str] = []
+
+
+async def _resolve_skill_names(
+    db: AsyncSession, names: list[str]
+) -> list[Skill]:
+    """Resolve a list of skill machine-names to Skill rows."""
+    from services.skill_catalog import get_skill_by_name
+    resolved = []
+    for name in names:
+        skill = await get_skill_by_name(db, name)
+        if skill:
+            resolved.append(skill)
+    return resolved
+
+
+@router.post("/agents/deploy-openclaw")
+async def deploy_openclaw_agent(
+    req: OpenClawDeployRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    One-click deploy: create an OpenClaw agent on a VPS via Docker Compose
+    over SSH.  A standard skill set is attached automatically; the caller
+    can extend it with ``extra_skill_names``.
+    """
+    from models.agent import AgentType
+    from services.openclaw_deployer import generate_compose, deploy_to_vps
+    import secrets as _secrets
+    import uuid as _uuid
+    from auth import get_password_hash as _hash
+
+    # --- Resolve SSH key ----
+    user_api_keys = decrypt_api_keys(current_user.model_api_keys_encrypted or "")
+    ssh_key_path = (
+        user_api_keys.get("openclaw_vps_ssh_key")
+        or user_api_keys.get("OPENCLAW_VPS_SSH_KEY")
+    )
+    if not ssh_key_path:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OPENCLAW_VPS_SSH_KEY not configured. Add it in Settings.",
+        )
+
+    instance_id = str(_uuid.uuid4())
+    api_key = f"am-{_secrets.token_urlsafe(32)}"
+    slug = Agent.generate_slug(req.agent_name)
+
+    # --- Resolve skills (defaults + extras) ----
+    all_skill_names = list(dict.fromkeys(
+        OPENCLAW_DEFAULT_SKILL_NAMES + req.extra_skill_names
+    ))  # deduplicate, preserve order
+    resolved_skills = await _resolve_skill_names(db, all_skill_names)
+
+    # --- Create agent record ----
+    agent = Agent(
+        name=req.agent_name,
+        description=f"OpenClaw instance on {req.vps_host}",
+        slug=slug,
+        agent_type=AgentType.OPENCLAW.value,
+        capabilities=["openclaw", "vps-deploy"],
+        tags=req.tags or ["openclaw"],
+        owner_id=current_user.id,
+        api_key_hash=_hash(api_key),
+        status=AgentStatus.PENDING.value,
+        version="1.0.0",
+    )
+    db.add(agent)
+    await db.commit()
+    await db.refresh(agent)
+
+    # Attach skills
+    for skill in resolved_skills:
+        db.add(AgentSkill(agent_id=agent.id, skill_id=skill.id, config={}))
+    await db.commit()
+
+    # --- Deploy to VPS ----
+    compose = generate_compose(
+        instance_id=instance_id,
+        agent_name=req.agent_name,
+        port=req.port,
+        extra_env=req.extra_env,
+    )
+
+    result = await deploy_to_vps(
+        vps_host=req.vps_host,
+        ssh_key_path=ssh_key_path,
+        compose_content=compose,
+        instance_id=instance_id,
+        ssh_user=req.ssh_user,
+        ssh_port=req.ssh_port,
+    )
+
+    if result["success"]:
+        agent.status = AgentStatus.ACTIVE.value
+        agent.endpoint_url = result.get("url", "")
+        await db.commit()
+        return {
+            "agent_id": agent.id,
+            "slug": agent.slug,
+            "agent_type": agent.agent_type,
+            "status": agent.status,
+            "url": result["url"],
+            "skills": [s.name for s in resolved_skills],
+            "message": result["message"],
+        }
+    else:
+        agent.status = AgentStatus.ERROR.value
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=result["message"],
+        )
+
+
 @router.patch("/me/keys")
 async def update_model_api_keys(
     keys: dict,
@@ -256,7 +427,11 @@ async def update_model_api_keys(
 ):
     """Update user's model API keys (encrypted)."""
     # Validate keys format
-    allowed_providers = ["openai", "anthropic", "openrouter", "google", "cohere"]
+    allowed_providers = [
+        "openai", "anthropic", "openrouter", "google", "cohere",
+        # OpenClaw VPS deployment keys
+        "openclaw_vps_host", "openclaw_vps_ssh_key",
+    ]
     filtered_keys = {k: v for k, v in keys.items() if k in allowed_providers}
     
     # Encrypt and store
