@@ -1,12 +1,13 @@
 """Agent-only API routes (registration, heartbeat)."""
+import asyncio
 import hmac
 from datetime import datetime, timezone
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Request, status, Header
+from fastapi import APIRouter, Depends, HTTPException, Request, status, Header, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from database import get_db
+from database import get_db, async_session_maker
 from models.agent import Agent, AgentStatus, AgentType
 from models.skill import Skill
 from models.agent_skill import AgentSkill
@@ -22,6 +23,7 @@ from schemas import (
 from auth import get_password_hash, get_current_active_user
 from services.health_checker import generate_health_check_token
 from services.skill_catalog import get_skill_by_name
+from services.skill_discovery import discover_and_sync_skills, discover_agent_skills
 
 router = APIRouter(prefix="/api/agent", tags=["agent-api"])
 
@@ -131,6 +133,11 @@ async def register_agent(
 
     print(f"🔑 Agent registered: {agent.name} (ID: {agent.id}, type: {agent_type})")
 
+    # Auto-discover skills for external agents
+    if is_external:
+        import asyncio
+        asyncio.create_task(_auto_discover_skills(agent.id, agent.endpoint_url))
+
     return {
         "agent_id": agent.id,
         "api_key": api_key,
@@ -138,6 +145,22 @@ async def register_agent(
         "health_check_token": health_check_token,
         "status": agent.status,
     }
+
+
+async def _auto_discover_skills(agent_id: str, endpoint_url: str):
+    """Background task to auto-discover skills from agent endpoint."""
+    await asyncio.sleep(2)  # Give agent time to be ready
+    
+    async with async_session_maker() as db:
+        try:
+            result = await db.execute(select(Agent).where(Agent.id == agent_id))
+            agent = result.scalar_one_or_none()
+            
+            if agent:
+                discovery_result = await discover_and_sync_skills(agent, db)
+                print(f"🔍 Auto-discovery for {agent.name}: {discovery_result['message']}")
+        except Exception as e:
+            print(f"⚠️ Auto-discovery failed for agent {agent_id}: {e}")
 
 
 @router.post("/heartbeat", response_model=AgentHeartbeatResponse)
@@ -319,5 +342,64 @@ async def recover_credentials(
         "health_check_token": new_health_token,
         "message": "New credentials generated. Save these immediately - they won't be shown again!"
     }
+
+
+@router.post("/discover-skills")
+async def discover_skills(
+    agent: Agent = Depends(get_agent_from_api_key),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Discover skills from the agent's endpoint.
+    
+    Calls the agent's endpoint_url/.well-known/skills to get available skills.
+    Auto-creates Skill records for unknown skills and links them to the agent.
+    
+    The agent should respond with:
+    [
+        {"name": "terminal", "display_name": "Terminal", "description": "..."},
+        {"name": "web_extract", "display_name": "Web Extract", ...}
+    ]
+    """
+    result = await discover_and_sync_skills(agent, db)
+    return result
+
+
+@router.get("/skills")
+async def get_discovered_skills(
+    agent: Agent = Depends(get_agent_from_api_key),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get the agent's current discovered skills."""
+    result = await db.execute(
+        select(AgentSkill)
+        .where(AgentSkill.agent_id == agent.id)
+    )
+    agent_skills = result.scalars().all()
+    
+    skills_list = []
+    for askill in agent_skills:
+        # Load the skill relationship
+        skill_result = await db.execute(
+            select(Skill).where(Skill.id == askill.skill_id)
+        )
+        skill = skill_result.scalar_one_or_none()
+        if skill:
+            skills_list.append({
+                "id": skill.id,
+                "name": skill.name,
+                "display_name": skill.display_name,
+                "description": skill.description,
+                "tier": skill.tier,
+                "category": skill.category,
+                "config": askill.config
+            })
+    
+    return {
+        "agent_id": agent.id,
+        "skills": skills_list,
+        "total": len(skills_list)
+    }
+
 
 

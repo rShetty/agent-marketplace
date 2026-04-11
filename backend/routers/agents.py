@@ -138,3 +138,46 @@ async def get_agent_skills(agent_id: str, db: AsyncSession = Depends(get_db)):
         }
         for askill in agent_skills
     ]
+
+
+@router.post("/{agent_id}/discover-skills")
+async def trigger_skill_discovery(
+    agent_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Trigger skill discovery for an agent.
+    
+    Queries the agent's endpoint to discover its available skills.
+    Only the agent owner or admin can trigger this.
+    """
+    from services.skill_discovery import discover_and_sync_skills
+    
+    result = await db.execute(
+        select(Agent)
+        .options(selectinload(Agent.skills))
+        .where(Agent.id == agent_id)
+    )
+    agent = result.scalar_one_or_none()
+    
+    if not agent:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Agent not found"
+        )
+    
+    # Check ownership
+    if agent.owner_id != current_user.id and not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to discover skills for this agent"
+        )
+    
+    discovery_result = await discover_and_sync_skills(agent, db)
+    
+    return {
+        "agent_id": agent.id,
+        "agent_name": agent.name,
+        **discovery_result
+    }
