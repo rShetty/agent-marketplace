@@ -1,5 +1,5 @@
 """Authentication routes."""
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -8,13 +8,15 @@ from database import get_db
 from models.user import User
 from schemas import UserCreate, UserResponse, Token, LoginRequest
 from auth import verify_password, get_password_hash, create_access_token, get_current_active_user
+from middleware.rate_limit import limiter, RATE_LIMITS
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 security = HTTPBearer()
 
 
 @router.post("/register", response_model=UserResponse)
-async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
+@limiter.limit(RATE_LIMITS["auth_register"])
+async def register(request: Request, user_data: UserCreate, db: AsyncSession = Depends(get_db)):
     """Register a new user."""
     # Check if email already exists
     result = await db.execute(select(User).where(User.email == user_data.email))
@@ -56,7 +58,8 @@ async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/login", response_model=Token)
-async def login(login_data: LoginRequest, db: AsyncSession = Depends(get_db)):
+@limiter.limit(RATE_LIMITS["auth_login"])
+async def login(request: Request, login_data: LoginRequest, db: AsyncSession = Depends(get_db)):
     """Login and get access token."""
     # Find user by email
     result = await db.execute(select(User).where(User.email == login_data.email))

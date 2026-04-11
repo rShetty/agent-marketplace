@@ -7,10 +7,13 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from slowapi.errors import RateLimitExceeded
 
 from database import init_db
 from routers import auth, agents, agent_api, skills, deploy, marketplace, invites, wallet, delegation, reviews
 from services.skill_catalog import seed_skills
+from middleware.rate_limit import limiter, rate_limit_exceeded_handler
+from middleware.monitoring import MonitoringMiddleware, metrics
 
 
 @asynccontextmanager
@@ -36,6 +39,13 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
+
+# Add rate limiting
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
+
+# Add monitoring middleware
+app.add_middleware(MonitoringMiddleware)
 
 # CORS middleware
 _allowed_origins = [
@@ -68,6 +78,12 @@ app.include_router(reviews.router)
 async def health_check():
     """Service health check."""
     return {"status": "healthy", "service": "agent-marketplace"}
+
+
+@app.get("/api/metrics")
+async def get_metrics():
+    """Get service metrics (for monitoring/admin)."""
+    return metrics.get_summary()
 
 
 # Static files for frontend (in production, serve built files)

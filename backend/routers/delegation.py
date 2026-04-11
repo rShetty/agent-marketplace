@@ -1,7 +1,7 @@
 """Agent-to-agent delegation routes."""
 from datetime import datetime
 from decimal import Decimal
-from fastapi import APIRouter, Depends, HTTPException, status, Header, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, status, Header, BackgroundTasks, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -13,12 +13,15 @@ from schemas import DelegationRequest, DelegationResponse, DelegationComplete
 from routers.agent_api import get_agent_from_api_key
 from routers.wallet import get_or_create_wallet
 from services.agent_client import get_agent_client, AgentTimeoutError, AgentConnectionError, AgentClientError
+from middleware.rate_limit import limiter, RATE_LIMITS
 
 router = APIRouter(prefix="/api/delegate", tags=["delegation"])
 
 
 @router.post("/request", response_model=DelegationResponse)
+@limiter.limit(RATE_LIMITS["delegate_request"])
 async def request_delegation(
+    request: Request,
     delegation: DelegationRequest,
     agent: Agent = Depends(get_agent_from_api_key),
     db: AsyncSession = Depends(get_db)
@@ -209,7 +212,9 @@ async def get_delegation_status(
 
 
 @router.post("/{delegation_id}/complete")
+@limiter.limit(RATE_LIMITS["delegate_complete"])
 async def complete_delegation(
+    request: Request,
     delegation_id: str,
     completion: DelegationComplete,
     agent: Agent = Depends(get_agent_from_api_key),
@@ -343,7 +348,9 @@ async def fail_delegation(
 
 
 @router.post("/{delegation_id}/callback")
+@limiter.limit(RATE_LIMITS["delegate_callback"])
 async def delegation_callback(
+    request: Request,
     delegation_id: str,
     callback_data: DelegationComplete,
     db: AsyncSession = Depends(get_db)
