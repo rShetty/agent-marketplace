@@ -1,7 +1,7 @@
 """Agent-to-agent delegation routes."""
 from datetime import datetime
 from decimal import Decimal
-from fastapi import APIRouter, Depends, HTTPException, status, Header
+from fastapi import APIRouter, Depends, HTTPException, status, Header, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -12,6 +12,7 @@ from models.transaction import Transaction, TransactionType, TransactionStatus
 from schemas import DelegationRequest, DelegationResponse, DelegationComplete
 from routers.agent_api import get_agent_from_api_key
 from routers.wallet import get_or_create_wallet
+from services.agent_client import get_agent_client, AgentTimeoutError, AgentConnectionError, AgentClientError
 
 router = APIRouter(prefix="/api/delegate", tags=["delegation"])
 
@@ -95,17 +96,81 @@ async def request_delegation(
     await db.commit()
     await db.refresh(transaction)
     
-    # TODO: Actually call target agent's endpoint with task
-    # For now, just return the delegation ID
-    # In production, this would make an HTTP call to target_agent.endpoint_url
-    
-    print(f"🔄 Delegation created: {agent.name} → {target_agent.name} ({delegation.max_tokens} tokens)")
-    
-    return DelegationResponse(
-        delegation_id=transaction.id,
-        status="pending",
-        message=f"Delegation request created. Target agent: {target_agent.name}"
-    )
+    # Call target agent's endpoint with task (async, non-blocking)
+    try:
+        agent_client = get_agent_client(timeout=delegation.timeout_seconds)
+        
+        # Make the HTTP call to the target agent
+        agent_response = await agent_client.send_delegation_task(
+            target_endpoint=target_agent.endpoint_url,
+            delegation_id=transaction.id,
+            task_description=delegation.task_description,
+            max_tokens=delegation.max_tokens,
+            callback_url=delegation.callback_url,
+            context=delegation.context,
+            timeout=delegation.timeout_seconds
+        )
+        
+        print(f"🔄 Delegation sent: {agent.name} → {target_agent.name} ({delegation.max_tokens} tokens)")
+        print(f"   Agent response: {agent_response.get('status', 'unknown')}")
+        
+        # If agent responds synchronously with completion, handle it immediately
+        if agent_response.get('status') == 'completed':
+            # Agent completed immediately - update transaction
+            transaction.status = TransactionStatus.COMPLETED.value
+            transaction.completed_at = datetime.utcnow()
+            
+            tokens_used = Decimal(str(agent_response.get('tokens_used', delegation.max_tokens)))
+            if tokens_used > transaction.amount:
+                tokens_used = transaction.amount
+            
+            # Transfer tokens
+            target_wallet.balance += tokens_used
+            
+            # Refund unused
+            if tokens_used < transaction.amount:
+                delegating_wallet.balance += (transaction.amount - tokens_used)
+            
+            transaction.amount = tokens_used
+            await db.commit()
+            
+            return DelegationResponse(
+                delegation_id=transaction.id,
+                status="completed",
+                message=f"Task completed by {target_agent.name}"
+            )
+        
+        return DelegationResponse(
+            delegation_id=transaction.id,
+            status="in_progress",
+            message=f"Task accepted by {target_agent.name}. Use /status endpoint to check progress."
+        )
+        
+    except AgentTimeoutError:
+        # Agent didn't respond in time - mark as failed and refund
+        transaction.status = TransactionStatus.FAILED.value
+        transaction.completed_at = datetime.utcnow()
+        transaction.task_description += "\n\nFailed: Agent timeout"
+        delegating_wallet.balance += transaction.amount  # Refund
+        await db.commit()
+        
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail=f"Target agent did not respond within {delegation.timeout_seconds}s"
+        )
+        
+    except (AgentConnectionError, AgentClientError) as e:
+        # Failed to reach agent - mark as failed and refund
+        transaction.status = TransactionStatus.FAILED.value
+        transaction.completed_at = datetime.utcnow()
+        transaction.task_description += f"\n\nFailed: {str(e)}"
+        delegating_wallet.balance += transaction.amount  # Refund
+        await db.commit()
+        
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Failed to communicate with target agent: {str(e)}"
+        )
 
 
 @router.get("/{delegation_id}/status")
@@ -274,6 +339,75 @@ async def fail_delegation(
         "delegation_id": delegation_id,
         "status": "failed",
         "refunded": float(transaction.amount)
+    }
+
+
+@router.post("/{delegation_id}/callback")
+async def delegation_callback(
+    delegation_id: str,
+    callback_data: DelegationComplete,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Callback endpoint for agents to report delegation completion asynchronously.
+    This is called by the executing agent when work is done.
+    
+    Note: This endpoint is public (no auth) but validates delegation_id.
+    In production, consider adding HMAC signature verification.
+    """
+    result = await db.execute(
+        select(Transaction).where(Transaction.id == delegation_id)
+    )
+    transaction = result.scalar_one_or_none()
+    
+    if not transaction:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Delegation not found"
+        )
+    
+    if transaction.status != TransactionStatus.PENDING.value:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Delegation is already {transaction.status}"
+        )
+    
+    # Calculate actual tokens used
+    tokens_used = Decimal(str(callback_data.tokens_used))
+    if tokens_used > transaction.amount:
+        tokens_used = transaction.amount
+    
+    # Transfer tokens to target wallet
+    target_wallet_result = await db.execute(
+        select(Wallet).where(Wallet.id == transaction.to_wallet_id)
+    )
+    target_wallet = target_wallet_result.scalar_one()
+    target_wallet.balance += tokens_used
+    
+    # Refund unused tokens
+    if tokens_used < transaction.amount:
+        refund = transaction.amount - tokens_used
+        delegating_wallet_result = await db.execute(
+            select(Wallet).where(Wallet.id == transaction.from_wallet_id)
+        )
+        delegating_wallet = delegating_wallet_result.scalar_one()
+        delegating_wallet.balance += refund
+    
+    # Update transaction
+    transaction.status = TransactionStatus.COMPLETED.value
+    transaction.completed_at = datetime.utcnow()
+    transaction.amount = tokens_used
+    
+    await db.commit()
+    
+    print(f"✅ Delegation callback received: {delegation_id} ({tokens_used} tokens)")
+    
+    return {
+        "success": True,
+        "delegation_id": delegation_id,
+        "tokens_used": float(tokens_used),
+        "status": "completed",
+        "message": "Delegation marked as completed"
     }
 
 
