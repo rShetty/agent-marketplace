@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from database import init_db
-from routers import auth, agents, agent_api, skills, deploy
+from routers import auth, agents, agent_api, skills, deploy, marketplace, invites, wallet, delegation, reviews
 from services.skill_catalog import seed_skills
 
 
@@ -57,6 +57,11 @@ app.include_router(agents.router)
 app.include_router(agent_api.router)
 app.include_router(skills.router)
 app.include_router(deploy.router)
+app.include_router(marketplace.router)
+app.include_router(invites.router)
+app.include_router(wallet.router)
+app.include_router(delegation.router)
+app.include_router(reviews.router)
 
 
 @app.get("/api/health")

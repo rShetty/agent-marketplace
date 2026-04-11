@@ -182,3 +182,138 @@ class AgentFilter(HiveBaseModel):
     skill_id: Optional[str] = None
     owner_id: Optional[str] = None
     search: Optional[str] = None
+
+
+# ============== Agent Invite Schemas ==============
+
+class AgentInviteCreate(HiveBaseModel):
+    agent_name: Optional[str] = None
+    agent_type: str = "BYOA_CUSTOM"
+
+
+class AgentInviteResponse(HiveBaseModel):
+    invite_id: str
+    invite_token: str
+    expires_at: datetime
+    instructions_url: str
+    
+
+class AgentAcceptInvite(HiveBaseModel):
+    invite_token: str
+    name: str
+    description: Optional[str] = None
+    endpoint_url: str
+    capabilities: List[str] = []
+    tags: List[str] = []
+    skill_names: List[str] = []
+
+
+# ============== Wallet & Transaction Schemas ==============
+
+class WalletResponse(HiveBaseModel):
+    id: str
+    user_id: str
+    balance: float
+    created_at: datetime
+    updated_at: datetime
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TransactionCreate(HiveBaseModel):
+    target_agent_id: str
+    amount: float
+    task_description: str
+    max_tokens: Optional[float] = None
+    callback_url: Optional[str] = None
+    timeout_seconds: int = 300
+
+
+class TransactionResponse(HiveBaseModel):
+    id: str
+    from_wallet_id: str
+    to_wallet_id: str
+    amount: float
+    transaction_type: str
+    delegating_agent_id: Optional[str]
+    executing_agent_id: Optional[str]
+    task_description: Optional[str]
+    status: str
+    created_at: datetime
+    completed_at: Optional[datetime]
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ============== Delegation Schemas ==============
+
+class DelegationRequest(HiveBaseModel):
+    target_agent_id: str
+    task_description: str
+    max_tokens: float
+    callback_url: Optional[str] = None
+    timeout_seconds: int = 300
+    context: Optional[Dict[str, Any]] = None
+
+
+class DelegationResponse(HiveBaseModel):
+    delegation_id: str
+    status: str
+    message: str
+
+
+class DelegationComplete(HiveBaseModel):
+    result: Dict[str, Any]
+    tokens_used: float
+
+
+# ============== Review Schemas ==============
+
+class AgentReviewCreate(HiveBaseModel):
+    agent_id: str
+    delegation_id: str
+    rating: int
+    comment: Optional[str] = None
+    
+    @field_validator("rating")
+    @classmethod
+    def validate_rating(cls, v: int) -> int:
+        if not 1 <= v <= 5:
+            raise ValueError("Rating must be between 1 and 5")
+        return v
+
+
+class AgentReviewResponse(HiveBaseModel):
+    id: str
+    agent_id: str
+    reviewer_user_id: str
+    rating: int
+    comment: Optional[str]
+    created_at: datetime
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ============== Marketplace Schemas ==============
+
+class MarketplaceAgentCard(HiveBaseModel):
+    id: str
+    name: str
+    slug: Optional[str]
+    avatar_url: Optional[str]
+    marketplace_description: Optional[str]
+    pricing_model: Optional[Dict[str, Any]]
+    tags: List[str]
+    status: str
+    owner_id: Optional[str]
+    last_seen: Optional[datetime]
+    average_rating: Optional[float] = None
+    total_reviews: int = 0
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+class VisibilityUpdate(HiveBaseModel):
+    is_public: bool
+    marketplace_description: Optional[str] = None
+    pricing_model: Optional[Dict[str, Any]] = None
