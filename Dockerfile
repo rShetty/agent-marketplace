@@ -24,7 +24,8 @@ WORKDIR /app/backend
 RUN mkdir -p /data
 
 # Expose port
-EXPOSE 8000
+ENV PORT=8080
+EXPOSE 8080
 
 # Run the application
-CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]

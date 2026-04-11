@@ -63,38 +63,39 @@ fi
 
 log_info "SSH connection successful"
 
-# Step 2: Verify remote server dependencies
-log_info "Verifying remote server dependencies..."
+# Step 2: Install/verify remote server dependencies
+log_info "Checking and installing remote server dependencies..."
 ssh -o StrictHostKeyChecking=accept-new "$REMOTE_HOST" bash <<'VERIFY'
 set -e
 
 # Check for git
 if ! command -v git &> /dev/null; then
-    echo "ERROR: git is not installed on remote server"
-    exit 1
+    echo "Installing git..."
+    apt-get update && apt-get install -y git
 fi
 
 # Check for docker
 if ! command -v docker &> /dev/null; then
-    echo "ERROR: docker is not installed on remote server"
-    exit 1
+    echo "Installing Docker..."
+    curl -fsSL https://get.docker.com | sh
 fi
 
 # Check for docker-compose
 if ! command -v docker-compose &> /dev/null; then
-    echo "ERROR: docker-compose is not installed on remote server"
-    exit 1
+    echo "Installing docker-compose..."
+    curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+    chmod +x /usr/local/bin/docker-compose
 fi
 
-echo "All dependencies verified"
+echo "All dependencies ready"
 VERIFY
 
 if [ $? -ne 0 ]; then
-    log_error "Remote server dependency check failed"
+    log_error "Remote server dependency setup failed"
     exit 1
 fi
 
-log_info "Remote server dependencies verified"
+log_info "Remote server dependencies ready"
 
 # Step 3: Create deployment directory
 log_info "Creating deployment directory on remote server..."
@@ -121,15 +122,15 @@ fi
 # Create production docker-compose configuration
 echo "Creating production docker-compose configuration..."
 cat > docker-compose.prod.yml <<DOCKEREOF
-version: '3.8'
 
 services:
   marketplace:
     build: .
     image: ${IMAGE_NAME}:latest
     ports:
-      - "0.0.0.0:${REMOTE_PORT}:8000"
+      - "0.0.0.0:${REMOTE_PORT}:${REMOTE_PORT}"
     environment:
+      - PORT=${REMOTE_PORT}
       - DATABASE_URL=sqlite+aiosqlite:////app/data/agent_marketplace.db
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - AGENT_IMAGE=agent-marketplace-agent:latest
@@ -148,8 +149,17 @@ networks:
     driver: bridge
 DOCKEREOF
 
-echo "Stopping existing containers..."
-docker-compose -f docker-compose.prod.yml down 2>/dev/null || true
+echo "Stopping existing containers on port ${REMOTE_PORT}..."
+# Find and stop any container using the port
+CONTAINER_ID=\$(docker ps -q --filter "publish=${REMOTE_PORT}")
+if [ -n "\$CONTAINER_ID" ]; then
+    echo "Stopping container \$CONTAINER_ID using port ${REMOTE_PORT}..."
+    docker stop \$CONTAINER_ID
+    docker rm \$CONTAINER_ID
+fi
+
+echo "Stopping existing compose containers..."
+docker-compose -f docker-compose.prod.yml down --remove-orphans 2>/dev/null || true
 
 echo "Building Docker image..."
 docker-compose -f docker-compose.prod.yml build
