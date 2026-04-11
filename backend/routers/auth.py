@@ -35,8 +35,22 @@ async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
     )
     
     db.add(new_user)
+    await db.flush()  # Flush to get user.id
+    
+    # Create wallet with initial balance
+    from models.wallet import Wallet
+    from decimal import Decimal
+    
+    wallet = Wallet(
+        user_id=new_user.id,
+        balance=Decimal("100.00")  # Initial 100 tokens
+    )
+    db.add(wallet)
+    
     await db.commit()
     await db.refresh(new_user)
+    
+    print(f"🎉 New user registered: {new_user.email} (Wallet created with 100 tokens)")
     
     return new_user
 

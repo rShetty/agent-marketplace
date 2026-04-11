@@ -149,6 +149,8 @@ async def agent_heartbeat(
     agent.status = AgentStatus.ACTIVE.value
     await db.commit()
     
+    print(f"❤️‍🩹 Heartbeat: {agent.name} (ID: {agent.id}) - Status: {agent.status}")
+    
     return AgentHeartbeatResponse(
         status="active",
         message="Heartbeat received"
@@ -211,6 +213,38 @@ async def update_agent_profile(
         "capabilities": agent.capabilities or [],
         "tags": agent.tags or [],
         "description": agent.description
+    }
+
+
+@router.put("/visibility")
+async def update_agent_visibility(
+    is_public: bool,
+    marketplace_description: Optional[str] = None,
+    pricing_model: Optional[dict] = None,
+    agent: Agent = Depends(get_agent_from_api_key),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Update agent's marketplace visibility and settings.
+    Agents can make themselves public/private.
+    """
+    agent.is_public = is_public
+    
+    if marketplace_description is not None:
+        agent.marketplace_description = marketplace_description
+    
+    if pricing_model is not None:
+        agent.pricing_model = pricing_model
+    
+    await db.commit()
+    await db.refresh(agent)
+    
+    return {
+        "id": agent.id,
+        "is_public": agent.is_public,
+        "marketplace_description": agent.marketplace_description,
+        "pricing_model": agent.pricing_model,
+        "message": f"Agent is now {'public' if is_public else 'private'}"
     }
 
 
@@ -287,87 +321,3 @@ async def recover_credentials(
     }
 
 
-@router.get("/verify-email")
-async def verify_email(
-    token: str,
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Verify agent email using the token sent via email.
-    This unlocks full API access for self-registered agents.
-    """
-    from datetime import datetime, timezone
-    
-    result = await db.execute(
-        select(Agent).where(Agent.verification_token == token)
-    )
-    agent = result.scalar_one_or_none()
-    
-    if not agent:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Invalid verification token"
-        )
-    
-    if agent.verification_status == VerificationStatus.VERIFIED.value:
-        return {
-            "success": True,
-            "message": "Agent already verified",
-            "agent_id": agent.id
-        }
-    
-    # Mark as verified
-    agent.verification_status = VerificationStatus.VERIFIED.value
-    agent.verified_at = datetime.now(timezone.utc)
-    agent.verification_token = None  # Invalidate token after use
-    
-    await db.commit()
-    
-    print(f"✅ Agent verified: {agent.name} (ID: {agent.id}, email: {agent.contact_email})")
-    
-    return {
-        "success": True,
-        "message": f"Email verified! Agent '{agent.name}' now has full API access.",
-        "agent_id": agent.id
-    }
-
-
-@router.post("/resend-verification")
-async def resend_verification(
-    agent: Agent = Depends(get_agent_from_api_key),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Resend verification email for unverified agents.
-    """
-    if agent.verification_status == VerificationStatus.VERIFIED.value:
-        return {
-            "success": True,
-            "message": "Agent already verified"
-        }
-    
-    if not agent.contact_email:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No contact email on file for this agent"
-        )
-    
-    # Send verification email
-    from services.email_service import send_verification_email
-    import os
-    
-    await send_verification_email(
-        to_email=agent.contact_email,
-        agent_id=agent.id,
-        agent_name=agent.name,
-        verification_token=agent.verification_token
-    )
-    
-    marketplace_url = os.getenv("MARKETPLACE_URL", "https://hive.rajeev.me")
-    verification_url = f"{marketplace_url}/api/agent/verify-email?token={agent.verification_token}"
-    
-    return {
-        "success": True,
-        "message": "Verification email sent",
-        "verification_url": verification_url
-    }

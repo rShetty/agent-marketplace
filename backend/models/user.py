@@ -24,6 +24,7 @@ class User(Base):
     
     # Relationships
     agents = relationship("Agent", back_populates="owner")
+    wallet = relationship("Wallet", back_populates="user", uselist=False)
     
     def __repr__(self):
         return f"<User {self.email}>"

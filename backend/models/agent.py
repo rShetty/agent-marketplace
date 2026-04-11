@@ -2,7 +2,7 @@
 import re
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Text, DateTime, ForeignKey, Integer, Enum, JSON
+from sqlalchemy import Column, String, Text, DateTime, ForeignKey, Integer, Enum, JSON, Boolean
 from sqlalchemy.orm import relationship
 from database import Base
 import enum
@@ -40,6 +40,11 @@ class Agent(Base):
     capabilities = Column(JSON, default=list)
     # Free-form tags for discovery (e.g. ["devops", "python", "openclaw"])
     tags = Column(JSON, default=list)
+    
+    # Marketplace visibility and pricing
+    is_public = Column(Boolean, default=False)  # Whether agent appears in marketplace
+    marketplace_description = Column(Text, nullable=True)  # Public-facing description
+    pricing_model = Column(JSON, nullable=True)  # {"type": "free"|"token", "rate": 10}
     
     # Agent type: managed | external | openclaw
     agent_type = Column(String(20), default=AgentType.MANAGED.value)
