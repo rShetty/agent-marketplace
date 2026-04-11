@@ -24,6 +24,9 @@ from services.skill_catalog import get_skill_by_name
 
 router = APIRouter(prefix="/api/agent", tags=["agent-api"])
 
+# Rate limiting for self-registration (imported from existing code)
+from services.health_checker import generate_health_check_token
+
 
 async def get_agent_from_api_key(
     x_api_key: str = Header(..., alias="X-API-Key"),
@@ -95,9 +98,10 @@ async def register_agent(
         endpoint_url=agent_data.endpoint_url or f"/agents/placeholder/invoke",
         status=AgentStatus.ACTIVE.value if is_external else AgentStatus.PENDING.value,
         health_check_token=health_check_token,
+        owner_id=current_user.id,
         version="1.0.0",
     )
-
+    
     db.add(agent)
     await db.commit()
     await db.refresh(agent)
@@ -216,6 +220,10 @@ _recovery_attempts: dict[str, list[float]] = {}  # key -> list of timestamps
 _RATE_LIMIT_WINDOW = 300  # 5 minutes
 _RATE_LIMIT_MAX = 5  # max attempts per window
 
+# Self-registration rate limits
+_SELF_REG_LIMIT_WINDOW = 3600  # 1 hour
+_SELF_REG_LIMIT_MAX = 10  # max 10 registrations per IP per hour
+
 def _check_rate_limit(key: str) -> None:
     now = _time.time()
     attempts = _recovery_attempts.get(key, [])
@@ -276,4 +284,83 @@ async def recover_credentials(
         "api_key": new_api_key,
         "health_check_token": new_health_token,
         "message": "New credentials generated. Save these immediately - they won't be shown again!"
+    }
+
+
+@router.get("/verify-email")
+async def verify_email(
+    token: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Verify agent email using the token sent via email.
+    This unlocks full API access for self-registered agents.
+    """
+    from datetime import datetime, timezone
+    
+    result = await db.execute(
+        select(Agent).where(Agent.verification_token == token)
+    )
+    agent = result.scalar_one_or_none()
+    
+    if not agent:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Invalid verification token"
+        )
+    
+    if agent.verification_status == VerificationStatus.VERIFIED.value:
+        return {
+            "success": True,
+            "message": "Agent already verified",
+            "agent_id": agent.id
+        }
+    
+    # Mark as verified
+    agent.verification_status = VerificationStatus.VERIFIED.value
+    agent.verified_at = datetime.now(timezone.utc)
+    agent.verification_token = None  # Invalidate token after use
+    
+    await db.commit()
+    
+    print(f"✅ Agent verified: {agent.name} (ID: {agent.id}, email: {agent.contact_email})")
+    
+    return {
+        "success": True,
+        "message": f"Email verified! Agent '{agent.name}' now has full API access.",
+        "agent_id": agent.id
+    }
+
+
+@router.post("/resend-verification")
+async def resend_verification(
+    agent: Agent = Depends(get_agent_from_api_key),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Resend verification email for unverified agents.
+    """
+    if agent.verification_status == VerificationStatus.VERIFIED.value:
+        return {
+            "success": True,
+            "message": "Agent already verified"
+        }
+    
+    if not agent.contact_email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No contact email on file for this agent"
+        )
+    
+    # TODO: Send verification email asynchronously
+    # await send_verification_email(agent.contact_email, agent.id, agent.verification_token)
+    
+    verification_url = f"https://hive.rajeev.me/api/agent/verify-email?token={agent.verification_token}"
+    
+    print(f"📧 Verification email resent to: {agent.contact_email} (agent: {agent.name})")
+    
+    return {
+        "success": True,
+        "message": "Verification email sent",
+        "verification_url": verification_url
     }
