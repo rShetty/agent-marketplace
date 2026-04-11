@@ -70,7 +70,7 @@ async def create_agent_invite(
     print(f"   3. Agent can accept with:")
     print(f"      curl -X POST {marketplace_url}/api/agent/accept-invite \\")
     print(f"        -H 'Content-Type: application/json' \\")
-    print(f"        -d '{{"invite_token": "{invite_token}", "name": "...", "endpoint_url": "..."}}')")
+    print(f'        -d ' + chr(39) + '{"invite_token": "' + invite_token + '", "name": "...", "endpoint_url": "..."}' + chr(39))
     print("")
     print("💡 TIP: The instructions URL contains a complete HIVE_JOIN.md guide")
     print("=" * 73)

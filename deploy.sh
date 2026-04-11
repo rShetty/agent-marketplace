@@ -149,17 +149,29 @@ networks:
     driver: bridge
 DOCKEREOF
 
-echo "Stopping existing containers on port ${REMOTE_PORT}..."
-# Find and stop any container using the port
-CONTAINER_ID=\$(docker ps -q --filter "publish=${REMOTE_PORT}")
-if [ -n "\$CONTAINER_ID" ]; then
-    echo "Stopping container \$CONTAINER_ID using port ${REMOTE_PORT}..."
-    docker stop \$CONTAINER_ID
-    docker rm \$CONTAINER_ID
-fi
+echo "Checking what's using port ${REMOTE_PORT}..."
+ss -tlnp 2>/dev/null | grep ":${REMOTE_PORT}" || true
+
+echo "Stopping all containers using port ${REMOTE_PORT}..."
+for cid in \$(docker ps -q); do
+    if docker port \$cid 2>/dev/null | grep -q "${REMOTE_PORT}"; then
+        echo "Stopping container \$cid..."
+        docker stop \$cid
+        docker rm \$cid
+    fi
+done
 
 echo "Stopping existing compose containers..."
 docker-compose -f docker-compose.prod.yml down --remove-orphans 2>/dev/null || true
+
+# Kill any remaining process on the port
+echo "Killing any process on port ${REMOTE_PORT}..."
+PID=\$(ss -tlnp | grep ":${REMOTE_PORT}" | grep -oP 'pid=\\K[0-9]+' | head -1)
+if [ -n "\$PID" ]; then
+    echo "Killing process \$PID on port ${REMOTE_PORT}..."
+    kill -9 \$PID 2>/dev/null || true
+    sleep 1
+fi
 
 echo "Building Docker image..."
 docker-compose -f docker-compose.prod.yml build
@@ -179,6 +191,12 @@ fi
 
 echo "Deployment complete!"
 docker-compose -f docker-compose.prod.yml ps
+
+# Reload nginx if installed
+if command -v nginx &> /dev/null; then
+    echo "Reloading nginx..."
+    nginx -s reload 2>/dev/null || systemctl reload nginx 2>/dev/null || true
+fi
 ENDSSH
 
 if [ $? -ne 0 ]; then
