@@ -102,6 +102,16 @@ class AgentSkillResponse(HiveBaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class AgentSkillWithDetailsResponse(HiveBaseModel):
+    id: str
+    skill_id: str
+    config: Optional[Dict[str, Any]] = None
+    added_at: datetime
+    skill: Optional[SkillResponse] = None
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
 # ============== Agent Schemas ==============
 
 class AgentBase(HiveBaseModel):
@@ -141,7 +151,7 @@ class AgentResponse(AgentBase):
 
 
 class AgentDetailResponse(AgentResponse):
-    skills: List[AgentSkillResponse] = []
+    skills: List[AgentSkillWithDetailsResponse] = []
 
 
 class AgentRegistrationResponse(HiveBaseModel):
