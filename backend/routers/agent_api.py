@@ -1,13 +1,12 @@
 """Agent-only API routes (registration, heartbeat)."""
-import asyncio
 import hmac
 from datetime import datetime, timezone
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Request, status, Header, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, Request, status, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from database import get_db, async_session_maker
+from database import get_db
 from models.agent import Agent, AgentStatus, AgentType
 from models.skill import Skill
 from models.agent_skill import AgentSkill
@@ -23,7 +22,7 @@ from schemas import (
 from auth import get_password_hash, get_current_active_user
 from services.health_checker import generate_health_check_token
 from services.skill_catalog import get_skill_by_name
-from services.skill_discovery import discover_and_sync_skills, discover_agent_skills
+from services.skill_discovery import discover_and_sync_skills
 
 router = APIRouter(prefix="/api/agent", tags=["agent-api"])
 
@@ -133,11 +132,6 @@ async def register_agent(
 
     print(f"🔑 Agent registered: {agent.name} (ID: {agent.id}, type: {agent_type})")
 
-    # Auto-discover skills for external agents
-    if is_external:
-        import asyncio
-        asyncio.create_task(_auto_discover_skills(agent.id, agent.endpoint_url))
-
     return {
         "agent_id": agent.id,
         "api_key": api_key,
@@ -145,22 +139,6 @@ async def register_agent(
         "health_check_token": health_check_token,
         "status": agent.status,
     }
-
-
-async def _auto_discover_skills(agent_id: str, endpoint_url: str):
-    """Background task to auto-discover skills from agent endpoint."""
-    await asyncio.sleep(2)  # Give agent time to be ready
-    
-    async with async_session_maker() as db:
-        try:
-            result = await db.execute(select(Agent).where(Agent.id == agent_id))
-            agent = result.scalar_one_or_none()
-            
-            if agent:
-                discovery_result = await discover_and_sync_skills(agent, db)
-                print(f"🔍 Auto-discovery for {agent.name}: {discovery_result['message']}")
-        except Exception as e:
-            print(f"⚠️ Auto-discovery failed for agent {agent_id}: {e}")
 
 
 @router.post("/heartbeat", response_model=AgentHeartbeatResponse)
