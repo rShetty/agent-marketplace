@@ -19,6 +19,7 @@ class User(Base):
     model_api_keys_encrypted = Column(Text, nullable=True)
     
     is_active = Column(Boolean, default=True)
+    is_admin = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     
     # Relationships

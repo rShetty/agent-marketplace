@@ -215,8 +215,9 @@
                         
                         const res = await fetch(`/api/agents?${params}`);
                         if (res.ok) {
-                            this.agents = await res.json();
-                            this.totalCount = this.agents.length; // TODO: Get total from API
+                            const data = await res.json();
+                            this.agents = data.items;
+                            this.totalCount = data.total;
                         }
                     } catch (e) {
                         console.error('Failed to load agents:', e);
@@ -238,9 +239,9 @@
                         if (this.filters.search) params.append('search', this.filters.search);
                         const res = await fetch(`/api/agents?${params}`);
                         if (res.ok) {
-                            const more = await res.json();
-                            this.agents = this.agents.concat(more);
-                            this.totalCount = this.agents.length;
+                            const data = await res.json();
+                            this.agents = this.agents.concat(data.items);
+                            this.totalCount = data.total;
                         }
                     } catch (e) {
                         console.error('Failed to load more agents:', e);

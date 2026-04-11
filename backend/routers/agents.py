@@ -37,7 +37,7 @@ async def get_agent_stats(db: AsyncSession = Depends(get_db)):
     }
 
 
-@router.get("", response_model=List[AgentResponse])
+@router.get("")
 async def list_agents(
     status: Optional[str] = None,
     skill_id: Optional[str] = None,
@@ -75,6 +75,11 @@ async def list_agents(
         # Join with AgentSkill to filter by skill
         query = query.join(AgentSkill).where(AgentSkill.skill_id == skill_id)
     
+    # Get total count before pagination
+    count_query = select(func.count()).select_from(query.alias())
+    total_result = await db.execute(count_query)
+    total_count = total_result.scalar()
+    
     # Order by most recently active
     query = query.order_by(Agent.last_seen.desc().nullslast())
     query = query.limit(limit).offset(offset)
@@ -82,7 +87,12 @@ async def list_agents(
     result = await db.execute(query)
     agents = result.scalars().unique().all()
     
-    return agents
+    return {
+        "items": [AgentResponse.model_validate(agent) for agent in agents],
+        "total": total_count,
+        "limit": limit,
+        "offset": offset
+    }
 
 
 @router.get("/{agent_id}", response_model=AgentDetailResponse)

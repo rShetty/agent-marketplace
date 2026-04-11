@@ -352,12 +352,19 @@ async def resend_verification(
             detail="No contact email on file for this agent"
         )
     
-    # TODO: Send verification email asynchronously
-    # await send_verification_email(agent.contact_email, agent.id, agent.verification_token)
+    # Send verification email
+    from services.email_service import send_verification_email
+    import os
     
-    verification_url = f"https://hive.rajeev.me/api/agent/verify-email?token={agent.verification_token}"
+    await send_verification_email(
+        to_email=agent.contact_email,
+        agent_id=agent.id,
+        agent_name=agent.name,
+        verification_token=agent.verification_token
+    )
     
-    print(f"📧 Verification email resent to: {agent.contact_email} (agent: {agent.name})")
+    marketplace_url = os.getenv("MARKETPLACE_URL", "https://hive.rajeev.me")
+    verification_url = f"{marketplace_url}/api/agent/verify-email?token={agent.verification_token}"
     
     return {
         "success": True,

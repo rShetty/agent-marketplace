@@ -7,7 +7,7 @@ from database import get_db
 from models.skill import Skill
 from schemas import SkillResponse, SkillCreate
 from services.skill_catalog import get_all_skills
-from auth import get_current_active_user
+from auth import get_current_active_user, get_current_admin_user
 from models.user import User
 
 router = APIRouter(prefix="/api/skills", tags=["skills"])
@@ -43,10 +43,9 @@ async def get_skill(skill_id: str, db: AsyncSession = Depends(get_db)):
 async def create_skill(
     skill_data: SkillCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(get_current_admin_user)
 ):
-    """Create a new skill (admin only for now)."""
-    # TODO: Add admin check
+    """Create a new skill (admin only)."""
     
     from sqlalchemy import select
     # Check if skill name already exists
