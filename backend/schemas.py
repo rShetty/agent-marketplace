@@ -254,6 +254,47 @@ class DelegationRequest(HiveBaseModel):
     callback_url: Optional[str] = None
     timeout_seconds: int = 300
     context: Optional[Dict[str, Any]] = None
+    
+    @field_validator("callback_url")
+    @classmethod
+    def validate_callback_url(cls, v: Optional[str]) -> Optional[str]:
+        """Validate callback URL to prevent SSRF attacks."""
+        if v is None:
+            return v
+        
+        from urllib.parse import urlparse
+        parsed = urlparse(v)
+        
+        # Must be HTTP/HTTPS
+        if parsed.scheme not in ["http", "https"]:
+            raise ValueError("Callback URL must use HTTP or HTTPS")
+        
+        # Block private IP ranges (basic SSRF protection)
+        hostname = parsed.hostname
+        if hostname:
+            import ipaddress
+            try:
+                ip = ipaddress.ip_address(hostname)
+                if ip.is_private or ip.is_loopback or ip.is_link_local:
+                    raise ValueError("Callback URL cannot point to private IP addresses")
+            except ValueError:
+                # Not an IP address, probably a domain - allow it
+                pass
+        
+        # Block localhost variations
+        if hostname and hostname.lower() in ["localhost", "127.0.0.1", "::1", "0.0.0.0"]:
+            raise ValueError("Callback URL cannot be localhost")
+        
+        return v
+    
+    @field_validator("max_tokens")
+    @classmethod
+    def validate_max_tokens(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError("max_tokens must be positive")
+        if v > 1000:
+            raise ValueError("max_tokens cannot exceed 1000")
+        return v
 
 
 class DelegationResponse(HiveBaseModel):
@@ -313,7 +354,27 @@ class MarketplaceAgentCard(HiveBaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class PricingModel(HiveBaseModel):
+    """Validated pricing model structure."""
+    type: str  # "free" or "token"
+    rate: Optional[float] = 0.0
+    
+    @field_validator("type")
+    @classmethod
+    def validate_type(cls, v: str) -> str:
+        if v not in ["free", "token"]:
+            raise ValueError("Pricing type must be 'free' or 'token'")
+        return v
+    
+    @field_validator("rate")
+    @classmethod
+    def validate_rate(cls, v: Optional[float]) -> float:
+        if v is not None and v < 0:
+            raise ValueError("Rate cannot be negative")
+        return v or 0.0
+
+
 class VisibilityUpdate(HiveBaseModel):
     is_public: bool
     marketplace_description: Optional[str] = None
-    pricing_model: Optional[Dict[str, Any]] = None
+    pricing_model: Optional[PricingModel] = None

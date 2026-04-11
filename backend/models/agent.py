@@ -49,8 +49,8 @@ class Agent(Base):
     # Agent type: managed | external | openclaw
     agent_type = Column(String(20), default=AgentType.MANAGED.value)
     
-    # Owner (nullable for autonomous agents)
-    owner_id = Column(String(36), ForeignKey("users.id"), nullable=True)
+    # Owner (required - every agent must have a human owner)
+    owner_id = Column(String(36), ForeignKey("users.id"), nullable=False)
     owner = relationship("User", back_populates="agents")
     
     # Authentication

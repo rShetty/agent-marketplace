@@ -16,7 +16,8 @@ from schemas import (
     AgentHeartbeatResponse,
     AgentCreate,
     AgentProfileUpdate,
-    HealthCheckResponse
+    HealthCheckResponse,
+    VisibilityUpdate
 )
 from auth import get_password_hash, get_current_active_user
 from services.health_checker import generate_health_check_token
@@ -218,9 +219,7 @@ async def update_agent_profile(
 
 @router.put("/visibility")
 async def update_agent_visibility(
-    is_public: bool,
-    marketplace_description: Optional[str] = None,
-    pricing_model: Optional[dict] = None,
+    visibility: VisibilityUpdate,
     agent: Agent = Depends(get_agent_from_api_key),
     db: AsyncSession = Depends(get_db)
 ):
@@ -228,13 +227,14 @@ async def update_agent_visibility(
     Update agent's marketplace visibility and settings.
     Agents can make themselves public/private.
     """
-    agent.is_public = is_public
+    agent.is_public = visibility.is_public
     
-    if marketplace_description is not None:
-        agent.marketplace_description = marketplace_description
+    if visibility.marketplace_description is not None:
+        agent.marketplace_description = visibility.marketplace_description
     
-    if pricing_model is not None:
-        agent.pricing_model = pricing_model
+    if visibility.pricing_model is not None:
+        # Convert Pydantic model to dict for JSON storage
+        agent.pricing_model = visibility.pricing_model.model_dump()
     
     await db.commit()
     await db.refresh(agent)
