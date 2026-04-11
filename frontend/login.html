@@ -64,7 +64,13 @@
                     localStorage.setItem('token', data.access_token);
                     window.location.href = '/';
                 } else {
-                    errorDiv.textContent = data.detail || 'Login failed';
+                    let errorMsg = 'Login failed';
+                    if (typeof data.detail === 'string') {
+                        errorMsg = data.detail;
+                    } else if (Array.isArray(data.detail)) {
+                        errorMsg = data.detail.map(e => e.msg).join(', ');
+                    }
+                    errorDiv.textContent = errorMsg;
                     errorDiv.classList.remove('hidden');
                 }
             } catch (e) {
