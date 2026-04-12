@@ -295,19 +295,6 @@ OPENCLAW_DEFAULT_SKILL_NAMES = [
 ]
 
 
-class OpenClawDeployRequest(HiveBaseModel):
-    """Request body for one-click OpenClaw deployment."""
-    agent_name: str
-    vps_host: str
-    ssh_user: str = "root"
-    ssh_port: int = 22
-    port: int = 9000
-    extra_env: Optional[dict] = None
-    tags: List[str] = []
-    # Users can add extra skills on top of the defaults
-    extra_skill_names: List[str] = []
-
-
 async def _resolve_skill_names(
     db: AsyncSession, names: list[str]
 ) -> list[Skill]:
@@ -321,6 +308,36 @@ async def _resolve_skill_names(
     return resolved
 
 
+OPENCLAW_VPS_HOST = os.getenv("OPENCLAW_VPS_HOST")
+OPENCLAW_VPS_SSH_KEY_PATH = os.getenv("OPENCLAW_VPS_SSH_KEY_PATH")
+OPENCLAW_VPS_SSH_USER = os.getenv("OPENCLAW_VPS_SSH_USER", "root")
+OPENCLAW_VPS_SSH_PORT = int(os.getenv("OPENCLAW_VPS_SSH_PORT", "22"))
+OPENCLAW_PORT_START = int(os.getenv("OPENCLAW_PORT_START", "9000"))
+
+
+async def _get_next_available_port(db: AsyncSession) -> int:
+    """Get the next available port for OpenClaw instances."""
+    result = await db.execute(
+        select(Agent.internal_port)
+        .where(Agent.agent_type == "openclaw")
+        .where(Agent.internal_port.isnot(None))
+        .order_by(Agent.internal_port.desc())
+        .limit(1)
+    )
+    last_port = result.scalar_one_or_none()
+    if last_port is None:
+        return OPENCLAW_PORT_START
+    return last_port + 1
+
+
+class OpenClawDeployRequest(HiveBaseModel):
+    """Request body for one-click OpenClaw deployment."""
+    agent_name: str
+    extra_env: Optional[dict] = None
+    tags: List[str] = []
+    extra_skill_names: List[str] = []
+
+
 @router.post("/agents/deploy-openclaw")
 async def deploy_openclaw_agent(
     req: OpenClawDeployRequest,
@@ -328,9 +345,8 @@ async def deploy_openclaw_agent(
     current_user: User = Depends(get_current_active_user),
 ):
     """
-    One-click deploy: create an OpenClaw agent on a VPS via Docker Compose
-    over SSH.  A standard skill set is attached automatically; the caller
-    can extend it with ``extra_skill_names``.
+    One-click deploy: create an OpenClaw agent on a shared VPS via Docker Compose
+    over SSH. VPS config is read from environment variables.
     """
     from models.agent import AgentType
     from services.openclaw_deployer import generate_compose, deploy_to_vps
@@ -338,32 +354,30 @@ async def deploy_openclaw_agent(
     import uuid as _uuid
     from auth import get_password_hash as _hash
 
-    # --- Resolve SSH key ----
-    user_api_keys = decrypt_api_keys(current_user.model_api_keys_encrypted or "")
-    ssh_key_path = (
-        user_api_keys.get("openclaw_vps_ssh_key")
-        or user_api_keys.get("OPENCLAW_VPS_SSH_KEY")
-    )
-    if not ssh_key_path:
+    if not OPENCLAW_VPS_HOST:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="OPENCLAW_VPS_SSH_KEY not configured. Add it in Settings.",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="OPENCLAW_VPS_HOST not configured on server.",
+        )
+    if not OPENCLAW_VPS_SSH_KEY_PATH:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="OPENCLAW_VPS_SSH_KEY_PATH not configured on server.",
         )
 
     instance_id = str(_uuid.uuid4())
     api_key = f"am-{_secrets.token_urlsafe(32)}"
     slug = Agent.generate_slug(req.agent_name)
+    port = await _get_next_available_port(db)
 
-    # --- Resolve skills (defaults + extras) ----
     all_skill_names = list(dict.fromkeys(
         OPENCLAW_DEFAULT_SKILL_NAMES + req.extra_skill_names
-    ))  # deduplicate, preserve order
+    ))
     resolved_skills = await _resolve_skill_names(db, all_skill_names)
 
-    # --- Create agent record ----
     agent = Agent(
         name=req.agent_name,
-        description=f"OpenClaw instance on {req.vps_host}",
+        description=f"OpenClaw instance on {OPENCLAW_VPS_HOST}:{port}",
         slug=slug,
         agent_type=AgentType.OPENCLAW.value,
         capabilities=["openclaw", "vps-deploy"],
@@ -372,31 +386,33 @@ async def deploy_openclaw_agent(
         api_key_hash=_hash(api_key),
         status=AgentStatus.PENDING.value,
         version="1.0.0",
+        internal_port=port,
     )
     db.add(agent)
     await db.commit()
     await db.refresh(agent)
 
-    # Attach skills
     for skill in resolved_skills:
         db.add(AgentSkill(agent_id=agent.id, skill_id=skill.id, config={}))
     await db.commit()
 
-    # --- Deploy to VPS ----
     compose = generate_compose(
         instance_id=instance_id,
         agent_name=req.agent_name,
-        port=req.port,
+        agent_id=agent.id,
+        api_key=api_key,
+        port=port,
         extra_env=req.extra_env,
     )
 
     result = await deploy_to_vps(
-        vps_host=req.vps_host,
-        ssh_key_path=ssh_key_path,
+        vps_host=OPENCLAW_VPS_HOST,
+        ssh_key_path=OPENCLAW_VPS_SSH_KEY_PATH,
         compose_content=compose,
         instance_id=instance_id,
-        ssh_user=req.ssh_user,
-        ssh_port=req.ssh_port,
+        port=port,
+        ssh_user=OPENCLAW_VPS_SSH_USER,
+        ssh_port=OPENCLAW_VPS_SSH_PORT,
     )
 
     if result["success"]:
@@ -409,6 +425,8 @@ async def deploy_openclaw_agent(
             "agent_type": agent.agent_type,
             "status": agent.status,
             "url": result["url"],
+            "port": port,
+            "api_key": api_key,
             "skills": [s.name for s in resolved_skills],
             "message": result["message"],
         }
@@ -431,8 +449,6 @@ async def update_model_api_keys(
     # Validate keys format
     allowed_providers = [
         "openai", "anthropic", "openrouter", "google", "cohere",
-        # OpenClaw VPS deployment keys
-        "openclaw_vps_host", "openclaw_vps_ssh_key",
     ]
     filtered_keys = {k: v for k, v in keys.items() if k in allowed_providers}
     

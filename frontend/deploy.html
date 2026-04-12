@@ -228,28 +228,12 @@
         <template x-if="mode === 'openclaw'">
             <div class="bg-white rounded-lg shadow p-6">
                 <h2 class="text-xl font-semibold mb-2">One-Click OpenClaw Deploy</h2>
-                <p class="text-gray-600 mb-4 text-sm">Deploys OpenClaw on your VPS. Default skills: <span class="font-mono text-xs">terminal, file_ops, web_extract, planning, code_review</span>.</p>
+                <p class="text-gray-600 mb-4 text-sm">Deploys OpenClaw on shared VPS. Default skills: <span class="font-mono text-xs">terminal, file_ops, web_extract, planning, code_review</span>.</p>
                 <div class="space-y-4">
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Agent Name *</label>
                         <input type="text" x-model="agent.name" placeholder="My OpenClaw Agent"
                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                    </div>
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">VPS Host *</label>
-                        <input type="text" x-model="openclaw.vps_host" placeholder="123.45.67.89"
-                               class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                        <p class="text-xs text-gray-500 mt-1">SSH key must be configured in <a href="/settings" class="underline">Settings</a>.</p>
-                    </div>
-                    <div class="grid grid-cols-2 gap-4">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">SSH User</label>
-                            <input type="text" x-model="openclaw.ssh_user" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Port</label>
-                            <input type="number" x-model.number="openclaw.port" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                        </div>
                     </div>
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-2">Additional Skills</label>
@@ -291,7 +275,7 @@
                 </div>
                 <div x-show="error" class="mt-4 p-4 bg-red-50 text-red-700 rounded-md" x-text="error"></div>
                 <div class="mt-6 flex justify-end">
-                    <button @click="deployOpenClaw()" :disabled="deploying || !agent.name || !openclaw.vps_host"
+                    <button @click="deployOpenClaw()" :disabled="deploying || !agent.name"
                             class="bg-purple-600 text-white px-8 py-3 rounded-md hover:bg-purple-700 font-medium disabled:opacity-50">Deploy OpenClaw</button>
                 </div>
             </div>
@@ -314,7 +298,7 @@
                 byoa: { endpoint_url: '', skillNamesRaw: '', tagsRaw: '' },
                 byoaResult: null,
                 openclawDefaults: ['terminal','file_ops','web_extract','planning','code_review'],
-                openclaw: { vps_host: '', ssh_user: 'root', port: 9000, extraSkills: [], tagsRaw: '' },
+                openclaw: { extraSkills: [], tagsRaw: '' },
 
                 init() { this.checkAuth(); this.loadSkills(); },
                 checkAuth() { if (!localStorage.getItem('token')) window.location.href = '/login'; },
@@ -385,7 +369,7 @@
                     try {
                         const res = await fetch('/api/agents/deploy-openclaw', {
                             method:'POST', headers: this._authHeaders(),
-                            body: JSON.stringify({ agent_name:this.agent.name, vps_host:this.openclaw.vps_host, ssh_user:this.openclaw.ssh_user||'root', port:this.openclaw.port||9000, extra_skill_names:this.openclaw.extraSkills, tags:tags })
+                            body: JSON.stringify({ agent_name:this.agent.name, extra_skill_names:this.openclaw.extraSkills, tags:tags })
                         });
                         if (res.ok) {
                             const data = await res.json();

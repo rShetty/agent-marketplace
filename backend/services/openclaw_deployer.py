@@ -12,14 +12,17 @@ import asyncio
 import tempfile
 from typing import Optional
 
-# Default OpenClaw Docker image — override via env var.
 OPENCLAW_IMAGE = os.getenv("OPENCLAW_IMAGE", "openclaw/openclaw:latest")
 OPENCLAW_INTERNAL_PORT = 8080
+OPENCLAW_MOCK_MODE = os.getenv("OPENCLAW_MOCK_MODE", "").lower() in ("1", "true", "yes")
+HIVE_URL = os.getenv("HIVE_URL", "http://localhost:8080")
 
 
 def generate_compose(
     instance_id: str,
     agent_name: str,
+    agent_id: str,
+    api_key: str,
     port: int = 9000,
     extra_env: Optional[dict] = None,
 ) -> str:
@@ -37,10 +40,13 @@ services:
     container_name: openclaw-{instance_id[:8]}
     restart: unless-stopped
     ports:
-      - "127.0.0.1:{port}:{OPENCLAW_INTERNAL_PORT}"
+      - "{port}:{OPENCLAW_INTERNAL_PORT}"
     environment:
       - INSTANCE_ID={instance_id}
+      - AGENT_ID={agent_id}
       - AGENT_NAME={agent_name}
+      - HIVE_API_KEY={api_key}
+      - HIVE_URL={HIVE_URL}
 {env_lines}    labels:
       hive.managed: "true"
       hive.instance-id: "{instance_id}"
@@ -53,6 +59,7 @@ async def deploy_to_vps(
     ssh_key_path: str,
     compose_content: str,
     instance_id: str,
+    port: int,
     ssh_user: str = "root",
     ssh_port: int = 22,
 ) -> dict:
@@ -64,6 +71,14 @@ async def deploy_to_vps(
     """
     remote_dir = f"/opt/hive/openclaw-{instance_id[:8]}"
 
+    if OPENCLAW_MOCK_MODE:
+        return {
+            "success": True,
+            "message": "OpenClaw deployed successfully (mock mode)",
+            "url": f"http://{vps_host}:{port}",
+            "remote_dir": remote_dir,
+        }
+
     # Write compose to a temp file to scp it over
     with tempfile.NamedTemporaryFile(
         mode="w", suffix=".yml", delete=False
@@ -74,6 +89,10 @@ async def deploy_to_vps(
     ssh_opts = (
         f"-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "
         f"-i {ssh_key_path} -p {ssh_port}"
+    )
+    scp_opts = (
+        f"-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "
+        f"-i {ssh_key_path} -P {ssh_port}"
     )
     target = f"{ssh_user}@{vps_host}"
 
@@ -93,7 +112,7 @@ async def deploy_to_vps(
 
         # 2. Copy compose file
         proc = await asyncio.create_subprocess_shell(
-            f"scp {ssh_opts} {local_compose} {target}:{remote_dir}/docker-compose.yml",
+            f"scp {scp_opts} {local_compose} {target}:{remote_dir}/docker-compose.yml",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -104,10 +123,10 @@ async def deploy_to_vps(
                 "message": f"Failed to copy compose file: {stderr.decode()}",
             }
 
-        # 3. Pull & up
+        # 3. Start container (skip pull for local images)
         proc = await asyncio.create_subprocess_shell(
             f"ssh {ssh_opts} {target} "
-            f"'cd {remote_dir} && docker compose pull && docker compose up -d'",
+            f"'cd {remote_dir} && docker compose up -d'",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -121,7 +140,7 @@ async def deploy_to_vps(
         return {
             "success": True,
             "message": "OpenClaw deployed successfully",
-            "url": f"http://{vps_host}:{OPENCLAW_INTERNAL_PORT}",
+            "url": f"http://{vps_host}:{port}",
             "remote_dir": remote_dir,
         }
 

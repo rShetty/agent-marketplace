@@ -176,3 +176,59 @@ def get_container_status(container_id: str) -> str:
         return container.status
     except Exception:
         return "not_found"
+
+
+OPENCLAW_IMAGE = os.getenv("OPENCLAW_IMAGE", "openclaw/openclaw:latest")
+OPENCLAW_INTERNAL_PORT = 8080
+
+
+def create_openclaw_container(
+    agent_id: str,
+    agent_name: str,
+    env_vars: dict,
+    api_key: str
+) -> tuple[str, int]:
+    """
+    Create an OpenClaw container running locally on the Hive server.
+    
+    Returns:
+        tuple: (container_id, internal_port)
+    """
+    client = get_docker_client()
+    if not client:
+        print(f"Mock: Creating OpenClaw container for agent {agent_id}")
+        return f"mock-openclaw-{agent_id[:8]}", get_available_port()
+    
+    ensure_network()
+    
+    port = get_available_port()
+    container_name = f"openclaw-{agent_id[:8]}"
+    
+    environment = {
+        "AGENT_ID": agent_id,
+        "AGENT_NAME": agent_name,
+        "AGENT_API_KEY": api_key,
+        "MARKETPLACE_URL": os.getenv("MARKETPLACE_URL", "http://host.docker.internal:8000"),
+    }
+    
+    environment.update(env_vars)
+    
+    try:
+        container = client.containers.run(
+            image=OPENCLAW_IMAGE,
+            name=container_name,
+            environment=environment,
+            network=NETWORK_NAME,
+            ports={f"{OPENCLAW_INTERNAL_PORT}/tcp": ("127.0.0.1", port)},
+            detach=True,
+            restart_policy={"Name": "unless-stopped"},
+            labels={
+                "hive/agent-id": agent_id,
+                "hive/agent-name": agent_name,
+                "hive/managed": "true",
+                "hive/type": "openclaw"
+            }
+        )
+        return container.id, port
+    except Exception as e:
+        raise Exception(f"Failed to create OpenClaw container: {e}")
