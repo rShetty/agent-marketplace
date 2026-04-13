@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hive 🐝 - Delegate Tasks</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .log-entry { font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; }
+        .log-timestamp { color: #6b7280; }
+        .log-info { color: #3b82f6; }
+        .log-error { color: #ef4444; }
+        .log-success { color: #10b981; }
+        .log-warning { color: #f59e0b; }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen" x-data="delegateApp()">
+    <!-- Navigation -->
+    <nav class="bg-white shadow-sm border-b">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16">
+                <div class="flex items-center">
+                    <a href="/" class="flex items-center space-x-2">
+                        <div class="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center">
+                            <span class="text-white font-bold text-lg">A</span>
+                        </div>
+                        <span class="text-xl font-semibold text-gray-900">Hive 🐝</span>
+                    </a>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <a href="/agents" class="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">Browse</a>
+                    <template x-if="isAuthenticated">
+                        <div class="flex items-center space-x-2">
+                            <a href="/delegate" class="text-indigo-600 px-3 py-2 rounded-md text-sm font-medium border border-indigo-600">Delegate</a>
+                            <a href="/deploy" class="bg-green-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-green-700">Deploy Agent</a>
+                            <a href="/settings" class="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">Settings</a>
+                            <button @click="logout()" class="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">Logout</button>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div class="mb-8">
+            <h1 class="text-3xl font-bold text-gray-900">Delegate Tasks</h1>
+            <p class="text-gray-600 mt-2">Create tasks and delegate them to specialized agents with real-time monitoring</p>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <!-- Left Panel: Task Creation & Agent Selection -->
+            <div class="space-y-6">
+                <!-- Task Creation Form -->
+                <div class="bg-white rounded-lg shadow-md p-6">
+                    <h2 class="text-xl font-semibold text-gray-900 mb-4">Create New Task</h2>
+                    
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">Task Description</label>
+                            <textarea 
+                                x-model="taskForm.description"
+                                rows="4"
+                                class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                placeholder="Describe the task you want to delegate..."
+                            ></textarea>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">Max Tokens</label>
+                                <input 
+                                    type="number" 
+                                    x-model="taskForm.maxTokens"
+                                    class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                    placeholder="1000"
+                                >
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">Timeout (seconds)</label>
+                                <input 
+                                    type="number" 
+                                    x-model="taskForm.timeout"
+                                    class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                    placeholder="300"
+                                >
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">Select Agent</label>
+                            <select 
+                                x-model="taskForm.selectedAgentId"
+                                @change="selectAgent()"
+                                class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            >
+                                <option value="">-- Select an agent --</option>
+                                <template x-for="agent in agents" :key="agent.id">
+                                    <option :value="agent.id" x-text="`${agent.name} (${agent.pricing_model?.type === 'token' ? agent.pricing_model.rate + ' tokens' : 'Free'})`"></option>
+                                </template>
+                            </select>
+                        </div>
+
+                        <!-- Selected Agent Details -->
+                        <div x-show="selectedAgent" class="bg-gray-50 rounded-md p-4 mt-4">
+                            <h3 class="font-medium text-gray-900 mb-2" x-text="selectedAgent?.name"></h3>
+                            <p class="text-sm text-gray-600 mb-2" x-text="selectedAgent?.description"></p>
+                            <div class="flex flex-wrap gap-2">
+                                <span class="text-xs bg-indigo-100 text-indigo-800 px-2 py-1 rounded" x-text="selectedAgent?.agent_type"></span>
+                                <span :class="statusBadgeClass(selectedAgent?.status)" x-text="selectedAgent?.status"></span>
+                            </div>
+                            <div class="flex flex-wrap gap-1 mt-2">
+                                <template x-for="skill in (selectedAgent?.skills || [])" :key="skill.id">
+                                    <span class="text-xs bg-gray-200 text-gray-700 px-2 py-1 rounded" x-text="skill.display_name"></span>
+                                </template>
+                            </div>
+                        </div>
+
+                        <button 
+                            @click="createDelegation()"
+                            :disabled="!taskForm.description || !taskForm.selectedAgentId || isDelegating"
+                            class="w-full bg-indigo-600 text-white px-4 py-3 rounded-md font-medium hover:bg-indigo-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition"
+                        >
+                            <span x-show="!isDelegating">Delegate Task</span>
+                            <span x-show="isDelegating">Delegating...</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Wallet Info -->
+                <div class="bg-white rounded-lg shadow-md p-6">
+                    <h2 class="text-xl font-semibold text-gray-900 mb-4">Your Wallet</h2>
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <div class="text-3xl font-bold text-indigo-600" x-text="walletBalance + ' tokens'"></div>
+                            <div class="text-sm text-gray-600 mt-1">Available balance</div>
+                        </div>
+                        <div class="text-right">
+                            <div class="text-sm text-gray-500">Last updated</div>
+                            <div class="text-sm font-medium text-gray-700" x-text="walletUpdated"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Your Agents -->
+                <div class="bg-white rounded-lg shadow-md p-6">
+                    <h2 class="text-xl font-semibold text-gray-900 mb-4">Your Agents</h2>
+                    <div class="space-y-3">
+                        <template x-for="agent in myAgents" :key="agent.id">
+                            <div class="flex items-center justify-between p-3 bg-gray-50 rounded-md">
+                                <div>
+                                    <div class="font-medium text-gray-900" x-text="agent.name"></div>
+                                    <div class="text-xs text-gray-500" x-text="agent.api_key?.substring(0, 20) + '...'"></div>
+                                </div>
+                                <button 
+                                    @click="copyAgentApiKey(agent.api_key)"
+                                    class="text-indigo-600 hover:text-indigo-800 text-sm"
+                                >
+                                    Copy API Key
+                                </button>
+                            </div>
+                        </template>
+                        <div x-show="myAgents.length === 0" class="text-sm text-gray-500">
+                            No agents yet. <a href="/deploy" class="text-indigo-600 hover:text-indigo-800">Deploy your first agent</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Panel: Active Delegation & Logs -->
+            <div class="space-y-6">
+                <!-- Active Delegation -->
+                <div x-show="activeDelegation" class="bg-white rounded-lg shadow-md p-6">
+                    <div class="flex items-center justify-between mb-4">
+                        <h2 class="text-xl font-semibold text-gray-900">Active Task</h2>
+                        <span :class="statusBadgeClass(activeDelegation?.status)" x-text="activeDelegation?.status"></span>
+                    </div>
+                    
+                    <div class="space-y-4">
+                        <div>
+                            <div class="text-sm text-gray-500">Task Description</div>
+                            <div class="text-gray-900" x-text="activeDelegation?.task_description"></div>
+                        </div>
+                        
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <div class="text-sm text-gray-500">Delegation ID</div>
+                                <div class="text-xs font-mono text-gray-700" x-text="activeDelegation?.id?.substring(0, 16) + '...'"></div>
+                            </div>
+                            <div>
+                                <div class="text-sm text-gray-500">Tokens Escrowed</div>
+                                <div class="text-gray-900" x-text="activeDelegation?.amount + ' tokens'"></div>
+                            </div>
+                        </div>
+
+                        <div>
+                            <div class="text-sm text-gray-500">Target Agent</div>
+                            <div class="text-gray-900" x-text="targetAgentName"></div>
+                        </div>
+
+                        <!-- Progress Bar -->
+                        <div x-show="activeDelegation?.status === 'pending'" class="mt-4">
+                            <div class="flex justify-between text-sm mb-1">
+                                <span class="text-gray-600">In Progress</span>
+                                <span class="text-indigo-600">Agent working...</span>
+                            </div>
+                            <div class="w-full bg-gray-200 rounded-full h-2">
+                                <div class="bg-indigo-600 h-2 rounded-full animate-pulse" style="width: 60%"></div>
+                            </div>
+                        </div>
+
+                        <!-- Success State -->
+                        <div x-show="activeDelegation?.status === 'completed'" class="bg-green-50 border border-green-200 rounded-md p-4">
+                            <div class="flex items-center">
+                                <svg class="w-5 h-5 text-green-600 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                                </svg>
+                                <span class="text-green-800 font-medium">Task Completed Successfully</span>
+                            </div>
+                        </div>
+
+                        <!-- Error State -->
+                        <div x-show="activeDelegation?.status === 'failed'" class="bg-red-50 border border-red-200 rounded-md p-4">
+                            <div class="flex items-center">
+                                <svg class="w-5 h-5 text-red-600 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                                </svg>
+                                <span class="text-red-800 font-medium">Task Failed</span>
+                            </div>
+                        </div>
+
+                        <button 
+                            @click="closeActiveDelegation()"
+                            class="w-full mt-4 bg-gray-100 text-gray-700 px-4 py-2 rounded-md hover:bg-gray-200 transition"
+                        >
+                            Close
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Real-time Logs -->
+                <div class="bg-white rounded-lg shadow-md p-6">
+                    <div class="flex items-center justify-between mb-4">
+                        <h2 class="text-xl font-semibold text-gray-900">Live Logs</h2>
+                        <div class="flex items-center space-x-2">
+                            <div :class="`w-2 h-2 rounded-full ${isStreaming ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`"></div>
+                            <span class="text-xs text-gray-500" x-text="isStreaming ? 'Connected' : 'Disconnected'"></span>
+                        </div>
+                    </div>
+                    
+                    <div class="bg-gray-900 rounded-md p-4 h-96 overflow-y-auto" id="logContainer">
+                        <template x-if="logs.length === 0">
+                            <div class="text-gray-500 text-sm">No logs yet. Start a delegation to see real-time updates.</div>
+                        </template>
+                        
+                        <template x-for="(log, index) in logs" :key="index">
+                            <div class="log-entry mb-2">
+                                <span class="log-timestamp" x-text="formatTimestamp(log.timestamp)"></span>
+                                <span :class="`log-${log.level}`" x-text="`[${log.level.toUpperCase()}]`"></span>
+                                <span class="text-gray-300" x-text="log.message"></span>
+                                <template x-if="log.data && Object.keys(log.data).length > 0">
+                                    <pre class="text-gray-400 mt-1 ml-4 text-xs" x-text="JSON.stringify(log.data, null, 2)"></pre>
+                                </template>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/app.js"></script>
+    <script>
+        function delegateApp() {
+            return {
+                isAuthenticated: false,
+                walletBalance: 0,
+                walletUpdated: '-',
+                taskForm: {
+                    description: '',
+                    maxTokens: 1000,
+                    timeout: 300,
+                    selectedAgentId: ''
+                },
+                agents: [],
+                myAgents: [],
+                selectedAgent: null,
+                activeDelegation: null,
+                targetAgentName: '',
+                logs: [],
+                isDelegating: false,
+                isStreaming: false,
+                eventSource: null,
+
+                init() {
+                    this.checkAuth();
+                    if (this.isAuthenticated) {
+                        this.loadWallet();
+                        this.loadAgents();
+                        this.loadMyAgents();
+                    }
+                },
+
+                checkAuth() {
+                    this.isAuthenticated = isAuthenticated();
+                },
+
+                logout() {
+                    logout();
+                    window.location.href = '/';
+                },
+
+                async loadWallet() {
+                    try {
+                        const res = await apiFetch('/api/wallet');
+                        if (res.ok) {
+                            const data = await res.json();
+                            this.walletBalance = data.balance;
+                            this.walletUpdated = timeAgo(data.updated_at);
+                        }
+                    } catch (e) {
+                        console.error('Failed to load wallet:', e);
+                    }
+                },
+
+                async loadAgents() {
+                    try {
+                        const res = await apiFetch('/api/agents?status=active&limit=50');
+                        if (res.ok) {
+                            const data = await res.json();
+                            this.agents = data.items.filter(a => a.is_public);
+                        }
+                    } catch (e) {
+                        console.error('Failed to load agents:', e);
+                    }
+                },
+
+                async loadMyAgents() {
+                    try {
+                        const res = await apiFetch('/api/agents?owner_id=me');
+                        if (res.ok) {
+                            const data = await res.json();
+                            this.myAgents = data.items;
+                        }
+                    } catch (e) {
+                        console.error('Failed to load my agents:', e);
+                    }
+                },
+
+                selectAgent() {
+                    this.selectedAgent = this.agents.find(a => a.id === this.taskForm.selectedAgentId);
+                },
+
+                async createDelegation() {
+                    if (!this.taskForm.description || !this.taskForm.selectedAgentId) {
+                        alert('Please fill in all required fields');
+                        return;
+                    }
+
+                    this.isDelegating = true;
+                    this.logs = [];
+
+                    try {
+                        // Create delegation
+                        const res = await apiFetch('/api/delegate/request', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                target_agent_id: this.taskForm.selectedAgentId,
+                                task_description: this.taskForm.description,
+                                max_tokens: parseFloat(this.taskForm.maxTokens),
+                                timeout_seconds: parseInt(this.taskForm.timeout)
+                            })
+                        });
+
+                        if (res.ok) {
+                            const data = await res.json();
+                            this.activeDelegation = {
+                                id: data.delegation_id,
+                                status: data.status,
+                                task_description: this.taskForm.description,
+                                amount: this.taskForm.maxTokens
+                            };
+                            this.targetAgentName = this.selectedAgent?.name || 'Unknown Agent';
+                            
+                            // Start streaming logs
+                            this.startStreaming(data.delegation_id);
+                            
+                            // Refresh wallet
+                            await this.loadWallet();
+                        } else {
+                            const error = await res.json();
+                            alert('Delegation failed: ' + error.detail);
+                        }
+                    } catch (e) {
+                        console.error('Delegation error:', e);
+                        alert('Delegation failed: ' + e.message);
+                    } finally {
+                        this.isDelegating = false;
+                    }
+                },
+
+                startStreaming(delegationId) {
+                    // Close existing connection
+                    if (this.eventSource) {
+                        this.eventSource.close();
+                    }
+
+                    this.isStreaming = true;
+                    
+                    // Create API key for a delegating agent (simplified - in production you'd have your own agent)
+                    const apiKey = localStorage.getItem('delegation_api_key') || this.myAgents[0]?.api_key;
+                    
+                    if (!apiKey) {
+                        console.error('No agent API key available for streaming');
+                        return;
+                    }
+
+                    const url = `/api/delegate/${delegationId}/stream?X-API-Key=${apiKey}`;
+                    this.eventSource = new EventSource(url);
+
+                    this.eventSource.onmessage = (event) => {
+                        try {
+                            const data = JSON.parse(event.data);
+                            
+                            if (data.type === 'log') {
+                                this.logs.push(data.data);
+                                this.scrollToBottom();
+                            } else if (data.type === 'status') {
+                                if (this.activeDelegation) {
+                                    this.activeDelegation.status = data.data.status;
+                                    if (data.data.completed_at) {
+                                        this.activeDelegation.completed_at = data.data.completed_at;
+                                    }
+                                }
+                                this.addSystemLog(`Status: ${data.data.status}`);
+                            }
+                        } catch (e) {
+                            console.error('Failed to parse SSE event:', e);
+                        }
+                    };
+
+                    this.eventSource.onerror = () => {
+                        console.error('SSE connection error');
+                        this.isStreaming = false;
+                        if (this.eventSource) {
+                            this.eventSource.close();
+                        }
+                    };
+
+                    this.eventSource.onopen = () => {
+                        console.log('SSE connection opened');
+                        this.isStreaming = true;
+                        this.addSystemLog('Connected to delegation stream');
+                    };
+                },
+
+                addSystemLog(message) {
+                    this.logs.push({
+                        timestamp: new Date().toISOString(),
+                        level: 'info',
+                        message: message,
+                        data: {}
+                    });
+                    this.scrollToBottom();
+                },
+
+                scrollToBottom() {
+                    this.$nextTick(() => {
+                        const container = document.getElementById('logContainer');
+                        if (container) {
+                            container.scrollTop = container.scrollHeight;
+                        }
+                    });
+                },
+
+                closeActiveDelegation() {
+                    if (this.eventSource) {
+                        this.eventSource.close();
+                        this.eventSource = null;
+                    }
+                    this.isStreaming = false;
+                    this.activeDelegation = null;
+                },
+
+                copyAgentApiKey(apiKey) {
+                    navigator.clipboard.writeText(apiKey);
+                    alert('API key copied to clipboard!');
+                },
+
+                formatTimestamp(timestamp) {
+                    const date = new Date(timestamp);
+                    return date.toLocaleTimeString();
+                },
+
+                statusBadgeClass(status) {
+                    const classes = {
+                        'active': 'bg-green-100 text-green-800',
+                        'idle': 'bg-yellow-100 text-yellow-800',
+                        'offline': 'bg-gray-100 text-gray-800',
+                        'pending': 'bg-blue-100 text-blue-800',
+                        'error': 'bg-red-100 text-red-800',
+                        'completed': 'bg-green-100 text-green-800',
+                        'failed': 'bg-red-100 text-red-800'
+                    };
+                    return `px-2 py-1 text-xs rounded-full font-medium ${classes[status] || 'bg-gray-100 text-gray-800'}`;
+                }
+            };
+        }
+    </script>
+</body>
+</html>

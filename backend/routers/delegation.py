@@ -2,10 +2,13 @@
 from datetime import datetime
 from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, status, Header, BackgroundTasks, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+import json
+import asyncio
 
-from database import get_db
+from database import get_db, async_session_maker
 from models.agent import Agent, AgentStatus
 from models.wallet import Wallet
 from models.transaction import Transaction, TransactionType, TransactionStatus
@@ -16,6 +19,10 @@ from services.agent_client import get_agent_client, AgentTimeoutError, AgentConn
 from middleware.rate_limit import limiter, RATE_LIMITS
 
 router = APIRouter(prefix="/api/delegate", tags=["delegation"])
+
+# In-memory store for delegation logs (in production, use Redis or similar)
+delegation_logs = {}  # delegation_id -> list of log entries
+delegation_status = {}  # delegation_id -> status
 
 
 @router.post("/request", response_model=DelegationResponse)
@@ -99,9 +106,18 @@ async def request_delegation(
     await db.commit()
     await db.refresh(transaction)
     
+    # Initialize delegation tracking
+    delegation_logs[transaction.id] = []
+    delegation_status[transaction.id] = "pending"
+    
+    # Add initial log
+    add_delegation_log(transaction.id, "info", f"Starting delegation to {target_agent.name}")
+    
     # Call target agent's endpoint with task (async, non-blocking)
     try:
         agent_client = get_agent_client(timeout=delegation.timeout_seconds)
+        
+        add_delegation_log(transaction.id, "info", f"Contacting agent at {target_agent.endpoint_url}")
         
         # Make the HTTP call to the target agent
         agent_response = await agent_client.send_delegation_task(
@@ -473,4 +489,222 @@ async def discover_agents_for_delegation(
     return {
         "agents": discovered,
         "count": len(discovered)
+    }
+
+
+# ============== Streaming and Logging ==============
+
+def add_delegation_log(delegation_id: str, level: str, message: str, data: dict = None, source: str = "system"):
+    """Add a log entry for a delegation."""
+    if delegation_id not in delegation_logs:
+        delegation_logs[delegation_id] = []
+    
+    log_entry = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "level": level,
+        "message": message,
+        "data": data or {},
+        "source": source  # "system" or "agent"
+    }
+    
+    delegation_logs[delegation_id].append(log_entry)
+    print(f"📝 [{delegation_id[:8]}] [{source.upper()}] {level.upper()}: {message}")
+
+
+def set_delegation_status(delegation_id: str, status: str):
+    """Update delegation status."""
+    delegation_status[delegation_id] = status
+    add_delegation_log(delegation_id, "info", f"Status changed to: {status}", source="system")
+
+
+@router.post("/{delegation_id}/progress")
+async def agent_progress_update(
+    delegation_id: str,
+    progress: dict,
+    request: Request
+):
+    """
+    Receive progress updates from executing agent.
+    Agents can call this to stream their progress/thinking back to the delegator.
+    
+    Expected progress format:
+    {
+        "level": "info" | "thinking" | "action" | "success" | "error",
+        "message": "What the agent is doing",
+        "data": {optional additional data}
+    }
+    """
+    # Verify delegation exists
+    async with async_session_maker() as session:
+        result = await session.execute(
+            select(Transaction).where(Transaction.id == delegation_id)
+        )
+        transaction = result.scalar_one_or_none()
+        
+        if not transaction:
+            raise HTTPException(status_code=404, detail="Delegation not found")
+        
+        # Log the progress update
+        level = progress.get("level", "info")
+        message = progress.get("message", "No message")
+        data = progress.get("data", {})
+        
+        add_delegation_log(delegation_id, level, message, data, source="agent")
+        
+        return {
+            "success": True,
+            "delegation_id": delegation_id,
+            "message": "Progress update received"
+        }
+
+
+@router.get("/{delegation_id}/stream")
+async def stream_delegation(
+    delegation_id: str,
+    agent: Agent = Depends(get_agent_from_api_key),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Stream delegation progress using Server-Sent Events.
+    """
+    # Verify delegation exists and agent has access
+    result = await db.execute(
+        select(Transaction).where(Transaction.id == delegation_id)
+    )
+    transaction = result.scalar_one_or_none()
+    
+    if not transaction:
+        raise HTTPException(status_code=404, detail="Delegation not found")
+    
+    if transaction.delegating_agent_id != agent.id and transaction.executing_agent_id != agent.id:
+        raise HTTPException(status_code=403, detail="Not authorized to view this delegation")
+    
+    async def event_generator():
+        """Generate SSE events for delegation progress."""
+        # Send initial state
+        last_log_index = 0
+        
+        while True:
+            # Check if we have new logs
+            if delegation_id in delegation_logs:
+                current_logs = delegation_logs[delegation_id]
+                current_status = delegation_status.get(delegation_id, "unknown")
+                
+                # Send new logs
+                for i in range(last_log_index, len(current_logs)):
+                    log = current_logs[i]
+                    event_data = {
+                        "type": "log",
+                        "data": log
+                    }
+                    yield f"data: {json.dumps(event_data)}\n\n"
+                    last_log_index = i + 1
+                
+                # Send status update if changed
+                transaction_status = transaction.status
+                if transaction_status in ["completed", "failed"]:
+                    # Send final status and close
+                    final_event = {
+                        "type": "status",
+                        "data": {
+                            "status": transaction_status,
+                            "completed_at": transaction.completed_at.isoformat() if transaction.completed_at else None,
+                            "amount": float(transaction.amount)
+                        }
+                    }
+                    yield f"data: {json.dumps(final_event)}\n\n"
+                    break
+                elif current_status != transaction_status:
+                    current_status = transaction_status
+                    status_event = {
+                        "type": "status",
+                        "data": {
+                            "status": current_status
+                        }
+                    }
+                    yield f"data: {json.dumps(status_event)}\n\n"
+            
+            # Heartbeat to keep connection alive
+            yield ": heartbeat\n\n"
+            
+            # Poll every second
+            await asyncio.sleep(1)
+    
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+
+@router.get("/{delegation_id}/logs")
+async def get_delegation_logs(
+    delegation_id: str,
+    agent: Agent = Depends(get_agent_from_api_key),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get all logs for a delegation (non-streaming).
+    """
+    # Verify delegation exists and agent has access
+    result = await db.execute(
+        select(Transaction).where(Transaction.id == delegation_id)
+    )
+    transaction = result.scalar_one_or_none()
+    
+    if not transaction:
+        raise HTTPException(status_code=404, detail="Delegation not found")
+    
+    if transaction.delegating_agent_id != agent.id and transaction.executing_agent_id != agent.id:
+        raise HTTPException(status_code=403, detail="Not authorized to view this delegation")
+    
+    logs = delegation_logs.get(delegation_id, [])
+    return {
+        "delegation_id": delegation_id,
+        "logs": logs,
+        "status": transaction.status,
+        "total_logs": len(logs)
+    }
+
+
+@router.get("/my-delegations")
+async def get_my_delegations(
+    status: str = None,
+    limit: int = 20,
+    agent: Agent = Depends(get_agent_from_api_key),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get delegations involving this agent (as delegator or executor).
+    """
+    query = select(Transaction).where(
+        (Transaction.delegating_agent_id == agent.id) | 
+        (Transaction.executing_agent_id == agent.id)
+    )
+    
+    if status:
+        query = query.where(Transaction.status == status)
+    
+    query = query.order_by(Transaction.created_at.desc()).limit(limit)
+    result = await db.execute(query)
+    transactions = result.scalars().all()
+    
+    return {
+        "delegations": [
+            {
+                "id": t.id,
+                "task_description": t.task_description,
+                "amount": float(t.amount),
+                "status": t.status,
+                "created_at": t.created_at.isoformat(),
+                "completed_at": t.completed_at.isoformat() if t.completed_at else None,
+                "role": "delegator" if t.delegating_agent_id == agent.id else "executor"
+            }
+            for t in transactions
+        ],
+        "total": len(transactions)
     }

@@ -26,6 +26,9 @@
                 </div>
                 <div class="flex items-center space-x-4">
                     <a href="/agents" class="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">Browse</a>
+                    <template x-if="isAuthenticated">
+                        <a href="/delegate" class="text-indigo-600 hover:text-indigo-800 px-3 py-2 rounded-md text-sm font-medium">Delegate</a>
+                    </template>
                     <template x-if="!isAuthenticated">
                         <div class="flex items-center space-x-2">
                             <a href="/login" class="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">Login</a>
@@ -99,7 +102,7 @@
                     <div class="flex items-start justify-between mb-4">
                         <div>
                             <h3 class="text-lg font-semibold text-gray-900" x-text="agent.name"></h3>
-                            <p class="text-sm text-gray-500 mt-1" x-text="agent.owner_id ? 'Owned by user' : 'Autonomous'"> </p>
+                            <p class="text-sm text-gray-500 mt-1" x-text="agent.owner_name ? 'Owned by ' + agent.owner_name : 'Autonomous'"> </p>
                         </div>
                         <span :class="statusBadgeClass(agent.status)" x-text="agent.status"></span>
                     </div>
@@ -214,7 +217,8 @@
                     try {
                         const res = await fetch('/api/agents?limit=6');
                         if (res.ok) {
-                            this.featuredAgents = await res.json();
+                            const data = await res.json();
+                            this.featuredAgents = data.items || [];
                         }
                     } catch (e) {
                         console.error('Failed to load agents:', e);

@@ -99,6 +99,9 @@ else:
 
 if frontend_path and os.path.exists(frontend_path):
     app.mount("/static", StaticFiles(directory=frontend_path), name="static")
+    # Also mount specific paths for frontend assets
+    if os.path.exists(os.path.join(frontend_path, "js")):
+        app.mount("/js", StaticFiles(directory=os.path.join(frontend_path, "js")), name="js")
 
 
 @app.get("/")
@@ -168,6 +171,15 @@ async def deploy_page():
 async def settings_page():
     """Serve the settings page."""
     frontend_file = os.path.join(frontend_path, "settings.html")
+    if os.path.exists(frontend_file):
+        return FileResponse(frontend_file)
+    raise HTTPException(status_code=404, detail="Page not found")
+
+
+@app.get("/delegate")
+async def delegate_page():
+    """Serve the delegation page."""
+    frontend_file = os.path.join(frontend_path, "delegate.html")
     if os.path.exists(frontend_file):
         return FileResponse(frontend_file)
     raise HTTPException(status_code=404, detail="Page not found")
