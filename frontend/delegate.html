@@ -364,8 +364,19 @@
                     this.logs = [];
 
                     try {
-                        // Create delegation
-                        const res = await apiFetch('/api/delegate/request', {
+                        // Validate inputs
+                        if (!this.taskForm.description || !this.taskForm.selectedAgentId) {
+                            alert('Please fill in all required fields');
+                            return;
+                        }
+                        
+                        if (parseFloat(this.taskForm.maxTokens) <= 0) {
+                            alert('Max tokens must be greater than 0');
+                            return;
+                        }
+
+                        // Create delegation (user endpoint)
+                        const res = await apiFetch('/api/delegate/user-request', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
@@ -411,15 +422,8 @@
 
                     this.isStreaming = true;
                     
-                    // Create API key for a delegating agent (simplified - in production you'd have your own agent)
-                    const apiKey = localStorage.getItem('delegation_api_key') || this.myAgents[0]?.api_key;
-                    
-                    if (!apiKey) {
-                        console.error('No agent API key available for streaming');
-                        return;
-                    }
-
-                    const url = `/api/delegate/${delegationId}/stream?X-API-Key=${apiKey}`;
+                    // Use user streaming endpoint with JWT authentication
+                    const url = `/api/delegate/${delegationId}/user-stream`;
                     this.eventSource = new EventSource(url);
 
                     this.eventSource.onmessage = (event) => {

@@ -25,6 +25,175 @@ delegation_logs = {}  # delegation_id -> list of log entries
 delegation_status = {}  # delegation_id -> status
 
 
+@router.post("/user-request", response_model=DelegationResponse)
+@limiter.limit(RATE_LIMITS["delegate_request"])
+async def user_request_delegation(
+    request: Request,
+    delegation: DelegationRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Request another agent to perform work (user-to-agent delegation).
+    
+    Requires: JWT authentication (user token)
+    Creates: PENDING transaction with escrowed tokens from user's wallet
+    Returns: delegation_id to track status
+    """
+    # Get target agent
+    result = await db.execute(
+        select(Agent).where(Agent.id == delegation.target_agent_id)
+    )
+    target_agent = result.scalar_one_or_none()
+    
+    if not target_agent:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Target agent not found"
+        )
+    
+    if target_agent.status not in [AgentStatus.ACTIVE.value, AgentStatus.IDLE.value]:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Target agent is {target_agent.status}"
+        )
+    
+    # Check if target agent is public
+    if not target_agent.is_public:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Target agent is not available for public delegation"
+        )
+    
+    # Get user wallet
+    user_wallet = await get_or_create_wallet(current_user.id, db)
+    
+    # Get target agent owner's wallet
+    target_wallet = await get_or_create_wallet(target_agent.owner_id, db)
+    
+    # Check balance
+    if user_wallet.balance < Decimal(str(delegation.max_tokens)):
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail=f"Insufficient tokens. Required: {delegation.max_tokens}, Available: {user_wallet.balance}"
+        )
+    
+    # Check pricing model
+    if target_agent.pricing_model:
+        pricing_type = target_agent.pricing_model.get("type")
+        if pricing_type == "token":
+            required_rate = Decimal(str(target_agent.pricing_model.get("rate", 0)))
+            if delegation.max_tokens < float(required_rate):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Agent requires minimum {required_rate} tokens"
+                )
+    
+    # Create PENDING transaction (escrow tokens)
+    transaction = Transaction(
+        from_wallet_id=user_wallet.id,
+        to_wallet_id=target_wallet.id,
+        amount=Decimal(str(delegation.max_tokens)),
+        transaction_type=TransactionType.DELEGATION.value,
+        delegating_agent_id=None,  # User delegation, no delegating agent
+        executing_agent_id=target_agent.id,
+        task_description=delegation.task_description,
+        status=TransactionStatus.PENDING.value
+    )
+    
+    # Escrow tokens (deduct from user wallet)
+    user_wallet.balance -= Decimal(str(delegation.max_tokens))
+    
+    db.add(transaction)
+    await db.commit()
+    await db.refresh(transaction)
+    
+    # Initialize delegation tracking
+    delegation_logs[transaction.id] = []
+    delegation_status[transaction.id] = "pending"
+    
+    # Add initial log
+    add_delegation_log(transaction.id, "info", f"Starting delegation to {target_agent.name}")
+    
+    # Call target agent's endpoint with task (async, non-blocking)
+    try:
+        agent_client = get_agent_client(timeout=delegation.timeout_seconds)
+        
+        add_delegation_log(transaction.id, "info", f"Contacting agent at {target_agent.endpoint_url}")
+        
+        # Make the HTTP call to the target agent
+        agent_response = await agent_client.send_delegation_task(
+            target_endpoint=target_agent.endpoint_url,
+            delegation_id=transaction.id,
+            task_description=delegation.task_description,
+            max_tokens=delegation.max_tokens,
+            callback_url=delegation.callback_url,
+            context=delegation.context,
+            timeout=delegation.timeout_seconds
+        )
+        
+        print(f"🔄 User delegation sent: User {current_user.email} → {target_agent.name} ({delegation.max_tokens} tokens)")
+        print(f"   Agent response: {agent_response.get('status', 'unknown')}")
+        
+        # If agent responds synchronously with completion, handle it immediately
+        if agent_response.get('status') == 'completed':
+            # Agent completed immediately - update transaction
+            transaction.status = TransactionStatus.COMPLETED.value
+            transaction.completed_at = datetime.utcnow()
+            
+            tokens_used = Decimal(str(agent_response.get('tokens_used', delegation.max_tokens)))
+            if tokens_used > transaction.amount:
+                tokens_used = transaction.amount
+            
+            # Transfer tokens
+            target_wallet.balance += tokens_used
+            
+            # Refund unused
+            if tokens_used < transaction.amount:
+                user_wallet.balance += (transaction.amount - tokens_used)
+            
+            transaction.amount = tokens_used
+            await db.commit()
+            
+            return DelegationResponse(
+                delegation_id=transaction.id,
+                status="completed",
+                message=f"Task completed by {target_agent.name}"
+            )
+        
+        return DelegationResponse(
+            delegation_id=transaction.id,
+            status="in_progress",
+            message=f"Task accepted by {target_agent.name}. Use /status endpoint to check progress."
+        )
+        
+    except AgentTimeoutError:
+        # Agent didn't respond in time - mark as failed and refund
+        transaction.status = TransactionStatus.FAILED.value
+        transaction.completed_at = datetime.utcnow()
+        transaction.task_description += "\n\nFailed: Agent timeout"
+        user_wallet.balance += transaction.amount  # Refund
+        await db.commit()
+        
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail=f"Target agent did not respond within {delegation.timeout_seconds}s"
+        )
+        
+    except (AgentConnectionError, AgentClientError) as e:
+        # Failed to reach agent - mark as failed and refund
+        transaction.status = TransactionStatus.FAILED.value
+        transaction.completed_at = datetime.utcnow()
+        transaction.task_description += f"\n\nFailed: {str(e)}"
+        user_wallet.balance += transaction.amount  # Refund
+        await db.commit()
+        
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Failed to communicate with target agent: {str(e)}"
+        )
+
+
 @router.post("/request", response_model=DelegationResponse)
 @limiter.limit(RATE_LIMITS["delegate_request"])
 async def request_delegation(
@@ -224,6 +393,201 @@ async def get_delegation_status(
         "task_description": transaction.task_description,
         "created_at": transaction.created_at,
         "completed_at": transaction.completed_at
+    }
+
+
+@router.get("/{delegation_id}/user-status")
+async def get_user_delegation_status(
+    delegation_id: str,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Check status of a user's delegation request."""
+    result = await db.execute(
+        select(Transaction).where(Transaction.id == delegation_id)
+    )
+    transaction = result.scalar_one_or_none()
+    
+    if not transaction:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Delegation not found"
+        )
+    
+    # Verify user is involved in this delegation (as delegator)
+    user_wallet = await get_or_create_wallet(current_user.id, db)
+    
+    if transaction.from_wallet_id != user_wallet.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to view this delegation"
+        )
+    
+    return {
+        "delegation_id": transaction.id,
+        "status": transaction.status,
+        "amount": float(transaction.amount),
+        "task_description": transaction.task_description,
+        "created_at": transaction.created_at,
+        "completed_at": transaction.completed_at
+    }
+
+
+@router.get("/{delegation_id}/user-logs")
+async def get_user_delegation_logs(
+    delegation_id: str,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get all logs for a user's delegation (non-streaming).
+    """
+    # Verify delegation exists and user has access
+    result = await db.execute(
+        select(Transaction).where(Transaction.id == delegation_id)
+    )
+    transaction = result.scalar_one_or_none()
+    
+    if not transaction:
+        raise HTTPException(status_code=404, detail="Delegation not found")
+    
+    # Verify user owns this delegation
+    user_wallet = await get_or_create_wallet(current_user.id, db)
+    
+    if transaction.from_wallet_id != user_wallet.id:
+        raise HTTPException(status_code=403, detail="Not authorized to view this delegation")
+    
+    logs = delegation_logs.get(delegation_id, [])
+    return {
+        "delegation_id": delegation_id,
+        "logs": logs,
+        "status": transaction.status,
+        "total_logs": len(logs)
+    }
+
+
+@router.get("/{delegation_id}/user-stream")
+async def stream_user_delegation(
+    delegation_id: str,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Stream delegation progress using Server-Sent Events (user version).
+    """
+    # Verify delegation exists and user has access
+    result = await db.execute(
+        select(Transaction).where(Transaction.id == delegation_id)
+    )
+    transaction = result.scalar_one_or_none()
+    
+    if not transaction:
+        raise HTTPException(status_code=404, detail="Delegation not found")
+    
+    # Verify user owns this delegation
+    user_wallet = await get_or_create_wallet(current_user.id, db)
+    
+    if transaction.from_wallet_id != user_wallet.id:
+        raise HTTPException(status_code=403, detail="Not authorized to view this delegation")
+    
+    async def event_generator():
+        """Generate SSE events for delegation progress."""
+        # Send initial state
+        last_log_index = 0
+        
+        while True:
+            # Check if we have new logs
+            if delegation_id in delegation_logs:
+                current_logs = delegation_logs[delegation_id]
+                current_status = delegation_status.get(delegation_id, "unknown")
+                
+                # Send new logs
+                for i in range(last_log_index, len(current_logs)):
+                    log = current_logs[i]
+                    event_data = {
+                        "type": "log",
+                        "data": log
+                    }
+                    yield f"data: {json.dumps(event_data)}\n\n"
+                    last_log_index = i + 1
+                
+                # Send status update if changed
+                transaction_status = transaction.status
+                if transaction_status in ["completed", "failed"]:
+                    # Send final status and close
+                    final_event = {
+                        "type": "status",
+                        "data": {
+                            "status": transaction_status,
+                            "completed_at": transaction.completed_at.isoformat() if transaction.completed_at else None,
+                            "amount": float(transaction.amount)
+                        }
+                    }
+                    yield f"data: {json.dumps(final_event)}\n\n"
+                    break
+                elif current_status != transaction_status:
+                    current_status = transaction_status
+                    status_event = {
+                        "type": "status",
+                        "data": {
+                            "status": current_status
+                        }
+                    }
+                    yield f"data: {json.dumps(status_event)}\n\n"
+            
+            # Heartbeat to keep connection alive
+            yield ": heartbeat\n\n"
+            
+            # Poll every second
+            await asyncio.sleep(1)
+    
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+
+@router.get("/user-delegations")
+async def get_user_delegations(
+    status: str = None,
+    limit: int = 20,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get delegations for current user (as delegator).
+    """
+    user_wallet = await get_or_create_wallet(current_user.id, db)
+    
+    query = select(Transaction).where(
+        Transaction.from_wallet_id == user_wallet.id
+    )
+    
+    if status:
+        query = query.where(Transaction.status == status)
+    
+    query = query.order_by(Transaction.created_at.desc()).limit(limit)
+    result = await db.execute(query)
+    transactions = result.scalars().all()
+    
+    return {
+        "delegations": [
+            {
+                "id": t.id,
+                "task_description": t.task_description,
+                "amount": float(t.amount),
+                "status": t.status,
+                "created_at": t.created_at.isoformat(),
+                "completed_at": t.completed_at.isoformat() if t.completed_at else None
+            }
+            for t in transactions
+        ],
+        "total": len(transactions)
     }
 
 
