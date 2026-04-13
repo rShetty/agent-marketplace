@@ -141,11 +141,14 @@ class AgentResponse(AgentBase):
     tags: List[str] = []
     agent_type: str = "managed"
     status: str
+    is_public: bool = False
     endpoint_url: Optional[str]
     version: str
     last_seen: Optional[datetime]
     created_at: datetime
     owner_id: Optional[str]
+    owner_name: Optional[str] = None
+    owner_email: Optional[str] = None
     
     model_config = ConfigDict(from_attributes=True)
 
