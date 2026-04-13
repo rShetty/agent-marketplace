@@ -10,13 +10,16 @@ import asyncio
 
 from database import get_db, async_session_maker
 from models.agent import Agent, AgentStatus
+from models.user import User
 from models.wallet import Wallet
 from models.transaction import Transaction, TransactionType, TransactionStatus
 from schemas import DelegationRequest, DelegationResponse, DelegationComplete
 from routers.agent_api import get_agent_from_api_key
 from routers.wallet import get_or_create_wallet
 from services.agent_client import get_agent_client, AgentTimeoutError, AgentConnectionError, AgentClientError
+from auth import get_current_active_user
 from middleware.rate_limit import limiter, RATE_LIMITS
+from auth import get_current_active_user
 
 router = APIRouter(prefix="/api/delegate", tags=["delegation"])
 
@@ -489,58 +492,34 @@ async def stream_user_delegation(
     
     if transaction.from_wallet_id != user_wallet.id:
         raise HTTPException(status_code=403, detail="Not authorized to view this delegation")
-    
+
     async def event_generator():
-        """Generate SSE events for delegation progress."""
-        # Send initial state
+        """Generate SSE events for delegation progress (user-facing)."""
         last_log_index = 0
-        
+        last_sent_status = delegation_status.get(delegation_id, "pending")
+
         while True:
-            # Check if we have new logs
-            if delegation_id in delegation_logs:
-                current_logs = delegation_logs[delegation_id]
-                current_status = delegation_status.get(delegation_id, "unknown")
-                
-                # Send new logs
-                for i in range(last_log_index, len(current_logs)):
-                    log = current_logs[i]
-                    event_data = {
-                        "type": "log",
-                        "data": log
-                    }
-                    yield f"data: {json.dumps(event_data)}\n\n"
-                    last_log_index = i + 1
-                
-                # Send status update if changed
-                transaction_status = transaction.status
-                if transaction_status in ["completed", "failed"]:
-                    # Send final status and close
-                    final_event = {
-                        "type": "status",
-                        "data": {
-                            "status": transaction_status,
-                            "completed_at": transaction.completed_at.isoformat() if transaction.completed_at else None,
-                            "amount": float(transaction.amount)
-                        }
-                    }
-                    yield f"data: {json.dumps(final_event)}\n\n"
-                    break
-                elif current_status != transaction_status:
-                    current_status = transaction_status
-                    status_event = {
-                        "type": "status",
-                        "data": {
-                            "status": current_status
-                        }
-                    }
-                    yield f"data: {json.dumps(status_event)}\n\n"
-            
+            current_status = delegation_status.get(delegation_id, "unknown")
+            current_logs = delegation_logs.get(delegation_id, [])
+
+            # Send any new log entries
+            for i in range(last_log_index, len(current_logs)):
+                yield f"data: {json.dumps({'type': 'log', 'data': current_logs[i]})}\n\n"
+                last_log_index = i + 1
+
+            # Notify on status change
+            if current_status != last_sent_status:
+                yield f"data: {json.dumps({'type': 'status', 'data': {'status': current_status}})}\n\n"
+                last_sent_status = current_status
+
+            # Stop streaming once terminal
+            if current_status in ("completed", "failed"):
+                break
+
             # Heartbeat to keep connection alive
             yield ": heartbeat\n\n"
-            
-            # Poll every second
             await asyncio.sleep(1)
-    
+
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
@@ -653,11 +632,12 @@ async def complete_delegation(
     transaction.status = TransactionStatus.COMPLETED.value
     transaction.completed_at = datetime.utcnow()
     transaction.amount = tokens_used  # Update to actual amount
-    
+
     await db.commit()
-    
-    # TODO: Send callback to delegating agent if callback_url was provided
-    
+
+    # Update in-memory status so SSE streams detect completion
+    set_delegation_status(delegation_id, "completed")
+
     print(f"✅ Delegation completed: {delegation_id} ({tokens_used} tokens)")
     
     return {
@@ -714,9 +694,12 @@ async def fail_delegation(
     transaction.status = TransactionStatus.FAILED.value
     transaction.completed_at = datetime.utcnow()
     transaction.task_description += f"\n\nFailed: {reason}"
-    
+
     await db.commit()
-    
+
+    # Update in-memory status so SSE streams detect failure
+    set_delegation_status(delegation_id, "failed")
+
     print(f"❌ Delegation failed: {delegation_id} - {reason}")
     
     return {
@@ -784,9 +767,12 @@ async def delegation_callback(
     transaction.status = TransactionStatus.COMPLETED.value
     transaction.completed_at = datetime.utcnow()
     transaction.amount = tokens_used
-    
+
     await db.commit()
-    
+
+    # Update in-memory status so SSE streams detect completion
+    set_delegation_status(delegation_id, "completed")
+
     print(f"✅ Delegation callback received: {delegation_id} ({tokens_used} tokens)")
     
     return {
@@ -942,56 +928,32 @@ async def stream_delegation(
     
     if transaction.delegating_agent_id != agent.id and transaction.executing_agent_id != agent.id:
         raise HTTPException(status_code=403, detail="Not authorized to view this delegation")
-    
+
     async def event_generator():
-        """Generate SSE events for delegation progress."""
-        # Send initial state
+        """Generate SSE events for delegation progress (agent-facing)."""
         last_log_index = 0
-        
+        last_sent_status = delegation_status.get(delegation_id, "pending")
+
         while True:
-            # Check if we have new logs
-            if delegation_id in delegation_logs:
-                current_logs = delegation_logs[delegation_id]
-                current_status = delegation_status.get(delegation_id, "unknown")
-                
-                # Send new logs
-                for i in range(last_log_index, len(current_logs)):
-                    log = current_logs[i]
-                    event_data = {
-                        "type": "log",
-                        "data": log
-                    }
-                    yield f"data: {json.dumps(event_data)}\n\n"
-                    last_log_index = i + 1
-                
-                # Send status update if changed
-                transaction_status = transaction.status
-                if transaction_status in ["completed", "failed"]:
-                    # Send final status and close
-                    final_event = {
-                        "type": "status",
-                        "data": {
-                            "status": transaction_status,
-                            "completed_at": transaction.completed_at.isoformat() if transaction.completed_at else None,
-                            "amount": float(transaction.amount)
-                        }
-                    }
-                    yield f"data: {json.dumps(final_event)}\n\n"
-                    break
-                elif current_status != transaction_status:
-                    current_status = transaction_status
-                    status_event = {
-                        "type": "status",
-                        "data": {
-                            "status": current_status
-                        }
-                    }
-                    yield f"data: {json.dumps(status_event)}\n\n"
-            
+            current_status = delegation_status.get(delegation_id, "unknown")
+            current_logs = delegation_logs.get(delegation_id, [])
+
+            # Send any new log entries
+            for i in range(last_log_index, len(current_logs)):
+                yield f"data: {json.dumps({'type': 'log', 'data': current_logs[i]})}\n\n"
+                last_log_index = i + 1
+
+            # Notify on status change
+            if current_status != last_sent_status:
+                yield f"data: {json.dumps({'type': 'status', 'data': {'status': current_status}})}\n\n"
+                last_sent_status = current_status
+
+            # Stop streaming once terminal
+            if current_status in ("completed", "failed"):
+                break
+
             # Heartbeat to keep connection alive
             yield ": heartbeat\n\n"
-            
-            # Poll every second
             await asyncio.sleep(1)
     
     return StreamingResponse(
