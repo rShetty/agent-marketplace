@@ -35,7 +35,7 @@ if not SECRET_KEY or SECRET_KEY == _INSECURE_DEFAULT_KEY:
 ALGORITHM = "HS256"
 JWT_ISSUER = "hive-marketplace"
 JWT_AUDIENCE = "hive-api"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "720"))  # 12 hours default
 
 security = HTTPBearer()
 

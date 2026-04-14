@@ -3,6 +3,16 @@ import os
 import json
 from contextlib import asynccontextmanager
 
+# Load .env from project root (two levels up from this file) if present.
+# This is a no-op when the variables are already set in the environment,
+# so production deployments can use real env vars without a .env file.
+try:
+    from dotenv import load_dotenv
+    _env_path = os.path.join(os.path.dirname(__file__), '..', '.env')
+    load_dotenv(_env_path, override=False)
+except ImportError:
+    pass
+
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware

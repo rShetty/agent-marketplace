@@ -37,15 +37,7 @@
         </div>
 
         <!-- ============ Mode Picker ============ -->
-        <div x-show="!mode" class="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <button @click="mode = 'custom'; step = 1"
-                    class="bg-white rounded-lg shadow hover:shadow-lg transition p-6 border text-left">
-                <div class="w-12 h-12 bg-indigo-100 rounded-lg flex items-center justify-center mb-4">
-                    <span class="text-2xl">🛠️</span>
-                </div>
-                <h3 class="text-lg font-semibold text-gray-900 mb-2">Custom Agent</h3>
-                <p class="text-sm text-gray-600">Deploy a Hive-managed container with the skills you choose.</p>
-            </button>
+        <div x-show="!mode" class="grid grid-cols-1 md:grid-cols-2 gap-6">
             <button @click="mode = 'byoa'; step = 1"
                     class="bg-white rounded-lg shadow hover:shadow-lg transition p-6 border text-left">
                 <div class="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center mb-4">
@@ -66,112 +58,6 @@
 
         <button x-show="mode && !deploying" @click="mode = null; step = 0; error = ''"
                 class="mb-6 text-sm text-gray-500 hover:text-gray-800">&larr; Change deployment mode</button>
-
-        <!-- ============ CUSTOM AGENT FLOW ============ -->
-        <template x-if="mode === 'custom'">
-            <div>
-                <div class="flex items-center mb-8">
-                    <template x-for="s in [{n:1,l:'Configure'},{n:2,l:'Skills'},{n:3,l:'Deploy'}]" :key="s.n">
-                        <div class="flex items-center" :class="s.n > 1 ? 'flex-1' : ''">
-                            <div x-show="s.n > 1" class="flex-1 h-px bg-gray-300 mx-4"></div>
-                            <div :class="step >= s.n ? 'text-indigo-600' : 'text-gray-400'" class="flex items-center">
-                                <div class="w-8 h-8 rounded-full border-2 flex items-center justify-center font-semibold"
-                                     :class="step >= s.n ? 'border-indigo-600 bg-indigo-50' : 'border-gray-300'" x-text="s.n"></div>
-                                <span class="ml-2 font-medium" x-text="s.l"></span>
-                            </div>
-                        </div>
-                    </template>
-                </div>
-                <!-- Step 1 -->
-                <div x-show="step === 1" class="bg-white rounded-lg shadow p-6">
-                    <h2 class="text-xl font-semibold mb-4">Agent Configuration</h2>
-                    <div class="space-y-4">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Agent Name *</label>
-                            <input type="text" x-model="agent.name" placeholder="e.g., My Coding Assistant"
-                                   class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Description</label>
-                            <textarea x-model="agent.description" rows="3" placeholder="What can this agent do?"
-                                      class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"></textarea>
-                        </div>
-                    </div>
-                    <div class="mt-6 flex justify-end">
-                        <button @click="step = 2" :disabled="!agent.name"
-                                class="bg-indigo-600 text-white px-6 py-2 rounded-md hover:bg-indigo-700 disabled:opacity-50">Next: Skills &rarr;</button>
-                    </div>
-                </div>
-                <!-- Step 2 -->
-                <div x-show="step === 2" class="bg-white rounded-lg shadow p-6">
-                    <h2 class="text-xl font-semibold mb-4">Select Skills</h2>
-                    <div class="mb-6"><h3 class="font-medium text-gray-900 mb-3">Core Skills</h3>
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                            <template x-for="skill in coreSkills" :key="skill.id">
-                                <label class="flex items-start p-3 border rounded-md cursor-pointer hover:bg-gray-50"
-                                       :class="selectedSkills.includes(skill.id) ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200'">
-                                    <input type="checkbox" :value="skill.id" x-model="selectedSkills" class="mt-1 mr-3">
-                                    <div><div class="font-medium" x-text="skill.display_name"></div>
-                                         <div class="text-sm text-gray-600" x-text="skill.description"></div></div>
-                                </label>
-                            </template>
-                        </div>
-                    </div>
-                    <div x-show="connectedSkills.length > 0" class="mb-6"><h3 class="font-medium text-gray-900 mb-3">Connected Skills</h3>
-                        <div class="bg-yellow-50 border border-yellow-200 rounded-md p-3 mb-4">
-                            <p class="text-sm text-yellow-800">Require API keys in <a href="/settings" class="underline">Settings</a>.</p>
-                        </div>
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                            <template x-for="skill in connectedSkills" :key="skill.id">
-                                <label class="flex items-start p-3 border rounded-md cursor-pointer hover:bg-gray-50"
-                                       :class="selectedSkills.includes(skill.id) ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200'">
-                                    <input type="checkbox" :value="skill.id" x-model="selectedSkills" class="mt-1 mr-3">
-                                    <div><div class="font-medium" x-text="skill.display_name"></div>
-                                         <div class="text-sm text-gray-600" x-text="skill.description"></div>
-                                         <div class="text-xs text-gray-500 mt-1">Requires: <span x-text="skill.required_env_vars.join(', ')"></span></div></div>
-                                </label>
-                            </template>
-                        </div>
-                    </div>
-                    <div class="mt-6 flex justify-between">
-                        <button @click="step = 1" class="text-gray-600 px-4 py-2">&larr; Back</button>
-                        <button @click="step = 3" :disabled="selectedSkills.length === 0"
-                                class="bg-indigo-600 text-white px-6 py-2 rounded-md hover:bg-indigo-700 disabled:opacity-50">Next: Deploy &rarr;</button>
-                    </div>
-                </div>
-                <!-- Step 3 -->
-                <div x-show="step === 3" class="bg-white rounded-lg shadow p-6">
-                    <h2 class="text-xl font-semibold mb-4">Review & Deploy</h2>
-                    <div class="bg-gray-50 rounded-md p-4 mb-6">
-                        <p><span class="text-gray-600">Name:</span> <span x-text="agent.name" class="font-medium"></span></p>
-                        <p><span class="text-gray-600">Description:</span> <span x-text="agent.description || 'None'"></span></p>
-                    </div>
-                    <div class="bg-gray-50 rounded-md p-4 mb-6">
-                        <h3 class="font-medium text-gray-900 mb-2">Skills (<span x-text="selectedSkills.length"></span>)</h3>
-                        <div class="flex flex-wrap gap-2">
-                            <template x-for="sid in selectedSkills" :key="sid">
-                                <span class="bg-indigo-100 text-indigo-800 px-3 py-1 rounded-full text-sm" x-text="getSkillName(sid)"></span>
-                            </template>
-                        </div>
-                    </div>
-                    <div x-show="deploying" class="mb-6">
-                        <div class="flex items-center mb-2">
-                            <div class="animate-spin w-5 h-5 border-2 border-indigo-600 border-t-transparent rounded-full mr-3"></div>
-                            <span class="font-medium" x-text="deployStatus"></span>
-                        </div>
-                        <div class="w-full bg-gray-200 rounded-full h-2">
-                            <div class="bg-indigo-600 h-2 rounded-full transition-all" :style="`width: ${deployProgress}%`"></div>
-                        </div>
-                    </div>
-                    <div x-show="error" class="mb-6 p-4 bg-red-50 text-red-700 rounded-md" x-text="error"></div>
-                    <div class="mt-6 flex justify-between">
-                        <button @click="step = 2" class="text-gray-600 px-4 py-2" :disabled="deploying">&larr; Back</button>
-                        <button @click="deployCustom()" :disabled="deploying"
-                                class="bg-green-600 text-white px-8 py-3 rounded-md hover:bg-green-700 font-medium disabled:opacity-50">Deploy Agent</button>
-                    </div>
-                </div>
-            </div>
-        </template>
 
         <!-- ============ BYOA FLOW ============ -->
         <template x-if="mode === 'byoa'">
@@ -311,7 +197,6 @@
                 step: 0,
                 agent: { name: '', description: '' },
                 skills: [],
-                selectedSkills: [],
                 deploying: false,
                 deployStatus: '',
                 deployProgress: 0,
@@ -325,46 +210,9 @@
                 init() { this.checkAuth(); this.loadSkills(); },
                 checkAuth() { if (!localStorage.getItem('token')) window.location.href = '/login'; },
                 logout() { localStorage.removeItem('token'); window.location.href = '/'; },
-
                 async loadSkills() {
-                    try { const r = await fetch('/api/skills'); if (r.ok) this.skills = await r.json(); }
+                    try { const r = await apiFetch('/api/skills'); if (r.ok) this.skills = await r.json(); }
                     catch (e) { console.error('Failed to load skills:', e); }
-                },
-                get coreSkills()      { return this.skills.filter(s => s.tier === 'core'); },
-                get connectedSkills() { return this.skills.filter(s => s.tier === 'connected'); },
-                getSkillName(id) { const s = this.skills.find(s => s.id === id); return s ? s.display_name : id; },
-
-                _authHeaders() {
-                    return { 'Content-Type':'application/json', 'Authorization':`Bearer ${localStorage.getItem('token')}` };
-                },
-
-                // ---- Custom deploy ----
-                async deployCustom() {
-                    this.deploying = true; this.error = '';
-                    this.deployStatus = 'Creating agent...'; this.deployProgress = 20;
-                    try {
-                        const res = await fetch('/api/agents/deploy', {
-                            method:'POST', headers: this._authHeaders(),
-                            body: JSON.stringify({ name: this.agent.name, description: this.agent.description, skill_ids: this.selectedSkills, skill_configs: {} })
-                        });
-                        if (res.ok) {
-                            const agent = await res.json();
-                            this.deployStatus = 'Verifying...'; this.deployProgress = 70;
-                            this._pollStatus(agent.id);
-                        } else { const d = await res.json(); this.error = d.detail || 'Failed'; this.deploying = false; }
-                    } catch(e) { this.error = 'Network error.'; this.deploying = false; }
-                },
-                _pollStatus(id, n=0) {
-                    setTimeout(async () => {
-                        try {
-                            const r = await fetch(`/api/agents/${id}`);
-                            if (r.ok) { const d = await r.json();
-                                if (d.status==='active') { this.deployProgress=100; this.deployStatus='Deployed!'; setTimeout(()=>{ window.location.href=`/agent-detail?id=${id}`; },1000); return; }
-                                if (d.status==='error') { this.error='Deployment failed.'; this.deploying=false; return; }
-                            }
-                        } catch(_) {}
-                        if (n<30) this._pollStatus(id,n+1); else { this.error='Taking too long.'; this.deploying=false; }
-                    }, 2000);
                 },
 
                 // ---- BYOA ----
@@ -373,8 +221,8 @@
                     const skillNames = this.byoa.skillNamesRaw.split(',').map(s=>s.trim()).filter(Boolean);
                     const tags = this.byoa.tagsRaw.split(',').map(s=>s.trim()).filter(Boolean);
                     try {
-                        const res = await fetch('/api/agent/register', {
-                            method:'POST', headers: this._authHeaders(),
+                        const res = await apiFetch('/api/agent/register', {
+                            method:'POST', headers: {'Content-Type':'application/json'},
                             body: JSON.stringify({ name:this.agent.name, description:this.agent.description, agent_type:'external', endpoint_url:this.byoa.endpoint_url, skill_names:skillNames, tags:tags })
                         });
                         if (res.ok) this.byoaResult = await res.json();
@@ -389,8 +237,8 @@
                     this.deployStatus = 'Deploying OpenClaw to VPS...'; this.deployProgress = 30;
                     const tags = this.openclaw.tagsRaw.split(',').map(s=>s.trim()).filter(Boolean);
                     try {
-                        const res = await fetch('/api/agents/deploy-openclaw', {
-                            method:'POST', headers: this._authHeaders(),
+                        const res = await apiFetch('/api/agents/deploy-openclaw', {
+                            method:'POST', headers: {'Content-Type':'application/json'},
                             body: JSON.stringify({ agent_name:this.agent.name, extra_skill_names:this.openclaw.extraSkills, tags:tags })
                         });
                         if (res.ok) {
