@@ -1,13 +1,18 @@
 """Authentication routes."""
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Cookie, Response
 from fastapi.security import HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from typing import Optional
 
 from database import get_db
 from models.user import User
 from schemas import UserCreate, UserResponse, Token, LoginRequest
-from auth import verify_password, get_password_hash, create_access_token, get_current_active_user
+from auth import (
+    verify_password, get_password_hash, create_access_token, get_current_active_user,
+    create_refresh_token, decode_refresh_token,
+    REFRESH_COOKIE_NAME, REFRESH_TOKEN_EXPIRE_DAYS, COOKIE_SECURE,
+)
 from middleware.rate_limit import limiter, RATE_LIMITS
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -59,31 +64,76 @@ async def register(request: Request, user_data: UserCreate, db: AsyncSession = D
 
 @router.post("/login", response_model=Token)
 @limiter.limit(RATE_LIMITS["auth_login"])
-async def login(request: Request, login_data: LoginRequest, db: AsyncSession = Depends(get_db)):
-    """Login and get access token."""
-    # Find user by email
+async def login(request: Request, response: Response, login_data: LoginRequest, db: AsyncSession = Depends(get_db)):
+    """Login — returns a short-lived access token and sets a long-lived refresh cookie."""
     result = await db.execute(select(User).where(User.email == login_data.email))
     user = result.scalar_one_or_none()
-    
-    if not user:
+
+    if not user or not verify_password(login_data.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
-    # Verify password
-    if not verify_password(login_data.password, user.hashed_password):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    
-    # Create access token
+
     access_token = create_access_token(data={"sub": user.id})
-    
+    refresh_token = create_refresh_token(user.id)
+
+    response.set_cookie(
+        key=REFRESH_COOKIE_NAME,
+        value=refresh_token,
+        httponly=True,
+        secure=COOKIE_SECURE,
+        samesite="lax",
+        max_age=REFRESH_TOKEN_EXPIRE_DAYS * 86400,
+        path="/api/auth",  # cookie only sent to auth endpoints
+    )
+
     return {"access_token": access_token, "token_type": "bearer"}
+
+
+@router.post("/refresh", response_model=Token)
+async def refresh_access_token(
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+    hive_refresh: Optional[str] = Cookie(default=None, alias=REFRESH_COOKIE_NAME),
+):
+    """
+    Issue a new access token using the httpOnly refresh cookie.
+    Also rotates the refresh token (issues a new cookie) for sliding expiry.
+    """
+    if not hive_refresh:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No refresh token")
+
+    user_id = decode_refresh_token(hive_refresh)  # raises 401 if invalid/expired
+
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user or not user.is_active:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found or inactive")
+
+    # Rotate: issue fresh refresh token (sliding window)
+    new_access_token = create_access_token(data={"sub": user.id})
+    new_refresh_token = create_refresh_token(user.id)
+
+    response.set_cookie(
+        key=REFRESH_COOKIE_NAME,
+        value=new_refresh_token,
+        httponly=True,
+        secure=COOKIE_SECURE,
+        samesite="lax",
+        max_age=REFRESH_TOKEN_EXPIRE_DAYS * 86400,
+        path="/api/auth",
+    )
+
+    return {"access_token": new_access_token, "token_type": "bearer"}
+
+
+@router.post("/logout")
+async def logout(response: Response):
+    """Clear the refresh token cookie."""
+    response.delete_cookie(key=REFRESH_COOKIE_NAME, path="/api/auth")
+    return {"message": "Logged out"}
 
 
 @router.get("/me", response_model=UserResponse)

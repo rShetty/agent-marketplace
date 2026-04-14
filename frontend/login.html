@@ -52,6 +52,7 @@
                 const res = await fetch('/api/auth/login', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include', // receive the httpOnly refresh cookie
                     body: JSON.stringify({
                         email: form.email.value,
                         password: form.password.value

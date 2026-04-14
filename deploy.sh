@@ -2,16 +2,65 @@
 
 # Deployment script for Hive application
 # Pulls code from GitHub and deploys to remote server via SSH
+#
+# Usage:
+#   ./deploy.sh [options]
+#
+# Options (all can also be set as environment variables):
+#   --host HOST              Remote server IP/hostname (default: 187.127.140.125)
+#   --port PORT              App port on remote server (default: 8080)
+#   --branch BRANCH          Git branch to deploy (default: main)
+#   --openclaw-host HOST     VPS host where OpenClaw containers are deployed
+#                            (defaults to same as --host)
+#   --openclaw-ssh-key PATH  Path to SSH key on the remote server for OpenClaw deploys
+#                            (default: /root/.ssh/id_ed25519)
+#   --openclaw-ssh-user USER SSH user for OpenClaw VPS (default: root)
+#   --openclaw-ssh-port PORT SSH port for OpenClaw VPS (default: 22)
+#
+# Environment variables (override defaults):
+#   REMOTE_HOST, REMOTE_PORT, GIT_BRANCH
+#   OPENCLAW_VPS_HOST, OPENCLAW_VPS_SSH_KEY_PATH,
+#   OPENCLAW_VPS_SSH_USER, OPENCLAW_VPS_SSH_PORT
+#   ENCRYPTION_KEY, SECRET_KEY
 
 set -e  # Exit on error
 
-# Configuration
-REMOTE_HOST="root@187.127.140.125"
-REMOTE_PORT="8080"
+# ---- Defaults ----
+REMOTE_SERVER="${REMOTE_HOST:-187.127.140.125}"
+REMOTE_PORT="${REMOTE_PORT:-8080}"
 APP_NAME="hive"
 IMAGE_NAME="hive-marketplace"
 GITHUB_REPO="https://github.com/rshetty/hive.git"
 GIT_BRANCH="${GIT_BRANCH:-main}"
+
+# OpenClaw defaults (can be overridden)
+OC_HOST="${OPENCLAW_VPS_HOST:-}"
+OC_SSH_KEY="${OPENCLAW_VPS_SSH_KEY_PATH:-/root/.ssh/id_ed25519}"
+OC_SSH_USER="${OPENCLAW_VPS_SSH_USER:-root}"
+OC_SSH_PORT="${OPENCLAW_VPS_SSH_PORT:-22}"
+
+# ---- Parse CLI flags ----
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --host)            REMOTE_SERVER="$2"; shift 2 ;;
+        --port)            REMOTE_PORT="$2";   shift 2 ;;
+        --branch)          GIT_BRANCH="$2";    shift 2 ;;
+        --openclaw-host)   OC_HOST="$2";       shift 2 ;;
+        --openclaw-ssh-key) OC_SSH_KEY="$2";   shift 2 ;;
+        --openclaw-ssh-user) OC_SSH_USER="$2"; shift 2 ;;
+        --openclaw-ssh-port) OC_SSH_PORT="$2"; shift 2 ;;
+        --help|-h)
+            sed -n '3,25p' "$0"
+            exit 0
+            ;;
+        *) echo "Unknown option: $1"; exit 1 ;;
+    esac
+done
+
+# If OpenClaw host not explicitly set, default to the app server itself
+OC_HOST="${OC_HOST:-$REMOTE_SERVER}"
+
+REMOTE_HOST="root@${REMOTE_SERVER}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -20,17 +69,12 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Helper functions
-log_info() {
-    echo -e "${GREEN}[INFO]${NC} $1"
-}
+log_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
-log_warn() {
-    echo -e "${YELLOW}[WARN]${NC} $1"
-}
-
-log_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
-}
+log_info "Deploying to ${REMOTE_SERVER}:${REMOTE_PORT} (branch: ${GIT_BRANCH})"
+log_info "OpenClaw VPS host: ${OC_HOST} | SSH key: ${OC_SSH_KEY}"
 
 # Check if required environment variables are set
 if [ -z "$ENCRYPTION_KEY" ]; then

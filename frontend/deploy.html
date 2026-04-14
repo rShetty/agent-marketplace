@@ -209,7 +209,6 @@
 
                 init() { this.checkAuth(); this.loadSkills(); },
                 checkAuth() { if (!localStorage.getItem('token')) window.location.href = '/login'; },
-                logout() { localStorage.removeItem('token'); window.location.href = '/'; },
                 async loadSkills() {
                     try { const r = await apiFetch('/api/skills'); if (r.ok) this.skills = await r.json(); }
                     catch (e) { console.error('Failed to load skills:', e); }

@@ -13,7 +13,7 @@ import tempfile
 from typing import Optional
 
 OPENCLAW_IMAGE = os.getenv("OPENCLAW_IMAGE", "openclaw/openclaw:latest")
-OPENCLAW_INTERNAL_PORT = 8080
+OPENCLAW_INTERNAL_PORT = 9000
 OPENCLAW_MOCK_MODE = os.getenv("OPENCLAW_MOCK_MODE", "").lower() in ("1", "true", "yes")
 HIVE_URL = os.getenv("HIVE_URL", "http://localhost:8080")
 

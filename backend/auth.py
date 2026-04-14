@@ -35,7 +35,11 @@ if not SECRET_KEY or SECRET_KEY == _INSECURE_DEFAULT_KEY:
 ALGORITHM = "HS256"
 JWT_ISSUER = "hive-marketplace"
 JWT_AUDIENCE = "hive-api"
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "720"))  # 12 hours default
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "15"))  # 15 min short-lived
+REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "30"))
+REFRESH_COOKIE_NAME = "hive_refresh"
+# In production set COOKIE_SECURE=1; in DEV it's False so http://localhost works
+COOKIE_SECURE = os.getenv("COOKIE_SECURE", "0" if _DEV_MODE else "1") not in ("0", "false", "no")
 
 security = HTTPBearer()
 
@@ -56,13 +60,44 @@ def get_password_hash(password: str) -> str:
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
-    """Create a JWT access token."""
+    """Create a short-lived JWT access token."""
     to_encode = data.copy()
     now = datetime.now(timezone.utc)
     expire = now + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
-    to_encode.update({"exp": expire, "iss": JWT_ISSUER, "aud": JWT_AUDIENCE})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
+    to_encode.update({"exp": expire, "iss": JWT_ISSUER, "aud": JWT_AUDIENCE, "type": "access"})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def create_refresh_token(user_id: str) -> str:
+    """Create a long-lived JWT refresh token stored in an httpOnly cookie."""
+    now = datetime.now(timezone.utc)
+    expire = now + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+    payload = {
+        "sub": user_id,
+        "exp": expire,
+        "iss": JWT_ISSUER,
+        "aud": JWT_AUDIENCE,
+        "type": "refresh",
+    }
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def decode_refresh_token(token: str) -> str:
+    """Validate a refresh token and return the user_id (sub claim)."""
+    try:
+        payload = jwt.decode(
+            token, SECRET_KEY, algorithms=[ALGORITHM],
+            options={"require": ["exp", "iss", "aud", "sub", "type"]},
+            issuer=JWT_ISSUER, audience=JWT_AUDIENCE,
+        )
+        if payload.get("type") != "refresh":
+            raise ValueError("Not a refresh token")
+        return payload["sub"]
+    except (JWTError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired refresh token",
+        ) from exc
 
 
 async def get_current_user(

@@ -109,11 +109,6 @@
                     }
                 },
                 
-                logout() {
-                    localStorage.removeItem('token');
-                    window.location.href = '/';
-                },
-                
                 async loadUser() {
                     try {
                         const res = await apiFetch('/api/auth/me');

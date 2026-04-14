@@ -183,11 +183,7 @@
                     this.isAuthenticated = !!token;
                 },
                 
-                logout() {
-                    localStorage.removeItem('token');
-                    this.isAuthenticated = false;
-                    window.location.href = '/';
-                },
+                logout() { logout(); },
                 
                 async loadStats() {
                     try {
