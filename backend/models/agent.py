@@ -54,6 +54,10 @@ class Agent(Base):
     owner = relationship("User", back_populates="agents")
     
     # Authentication
+    # First 12 chars of the raw API key stored in clear for O(1) prefix filtering.
+    # We still bcrypt-verify the full key — the prefix is not a secret (it has no
+    # entropy advantage over a UUID), it just narrows the scan from N → ~1 row.
+    api_key_prefix = Column(String(16), nullable=True, index=True)
     api_key_hash = Column(String(255), nullable=False)
     
     # Status
@@ -68,6 +72,8 @@ class Agent(Base):
     last_seen = Column(DateTime, nullable=True)
     last_health_check = Column(DateTime, nullable=True)
     health_check_token = Column(String(100), nullable=True)
+    # Whether the agent is ready to accept new delegations (self-reported via heartbeat)
+    ready = Column(Boolean, default=True)
     
     # Version
     version = Column(String(50), default="1.0.0")

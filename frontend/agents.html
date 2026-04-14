@@ -97,7 +97,7 @@
                         <div>
                             <h3 class="text-lg font-semibold text-gray-900" x-text="agent.name"></h3>
                             <p class="text-sm text-gray-500 mt-1">
-                                <span x-text="agent.owner_id ? 'User-owned' : 'Autonomous'"></span>
+                                <span x-text="agent.owner_name ? 'Owned by ' + agent.owner_name : 'Autonomous'"></span>
                                 <span class="mx-1">•</span>
                                 <span x-text="timeAgo(agent.last_seen)"></span>
                             </p>

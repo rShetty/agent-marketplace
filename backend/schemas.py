@@ -142,6 +142,7 @@ class AgentResponse(AgentBase):
     agent_type: str = "managed"
     status: str
     is_public: bool = False
+    ready: Optional[bool] = True
     endpoint_url: Optional[str]
     version: str
     last_seen: Optional[datetime]
@@ -174,9 +175,15 @@ class AgentProfileUpdate(HiveBaseModel):
     tags: Optional[List[str]] = None
 
 
+class AgentHeartbeatRequest(HiveBaseModel):
+    """Optional body for heartbeat — agent can signal its readiness."""
+    ready: bool = True  # False when busy processing a long task
+
+
 class AgentHeartbeatResponse(HiveBaseModel):
     status: str
     message: str
+    ready: bool = True
 
 
 # ============== Health Check ==============
@@ -247,6 +254,10 @@ class TransactionResponse(HiveBaseModel):
     from_wallet_id: str
     to_wallet_id: str
     amount: float
+    platform_fee: Optional[float] = None
+    session_id: Optional[str] = None
+    delegation_depth: int = 0
+    task_result: Optional[Dict[str, Any]] = None
     transaction_type: str
     delegating_agent_id: Optional[str]
     executing_agent_id: Optional[str]
@@ -267,6 +278,8 @@ class DelegationRequest(HiveBaseModel):
     callback_url: Optional[str] = None
     timeout_seconds: int = 300
     context: Optional[Dict[str, Any]] = None
+    # Optional session ID to group related delegations (multi-turn workflows)
+    session_id: Optional[str] = None
     
     @field_validator("callback_url")
     @classmethod

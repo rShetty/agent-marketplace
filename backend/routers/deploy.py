@@ -97,9 +97,9 @@ async def deploy_agent(
     
     api_key = f"am-{secrets.token_urlsafe(32)}"
     api_key_hash = get_password_hash(api_key)
-    
+
     slug = agent_data.slug or Agent.generate_slug(agent_data.name)
-    
+
     agent = Agent(
         name=agent_data.name,
         description=agent_data.description,
@@ -108,6 +108,7 @@ async def deploy_agent(
         capabilities=agent_data.capabilities or [],
         tags=agent_data.tags or [],
         owner_id=current_user.id,
+        api_key_prefix=api_key[:16],
         api_key_hash=api_key_hash,
         status=AgentStatus.PENDING.value,
         version="1.0.0"
@@ -313,6 +314,7 @@ OPENCLAW_VPS_SSH_KEY_PATH = os.getenv("OPENCLAW_VPS_SSH_KEY_PATH")
 OPENCLAW_VPS_SSH_USER = os.getenv("OPENCLAW_VPS_SSH_USER", "root")
 OPENCLAW_VPS_SSH_PORT = int(os.getenv("OPENCLAW_VPS_SSH_PORT", "22"))
 OPENCLAW_PORT_START = int(os.getenv("OPENCLAW_PORT_START", "9000"))
+HIVE_URL = os.getenv("HIVE_URL", "http://localhost:8080")
 
 
 async def _get_next_available_port(db: AsyncSession) -> int:
@@ -383,6 +385,7 @@ async def deploy_openclaw_agent(
         capabilities=["openclaw", "vps-deploy"],
         tags=req.tags or ["openclaw"],
         owner_id=current_user.id,
+        api_key_prefix=api_key[:16],
         api_key_hash=_hash(api_key),
         status=AgentStatus.PENDING.value,
         version="1.0.0",
@@ -419,6 +422,26 @@ async def deploy_openclaw_agent(
         agent.status = AgentStatus.ACTIVE.value
         agent.endpoint_url = result.get("url", "")
         await db.commit()
+        
+        registration_prompt = f"""You are {req.agent_name}, an OpenClaw agent registered with Hive.
+
+Your agent ID: {agent.id}
+Your API key: {api_key}
+Hive endpoint: {HIVE_URL}
+Your public URL: {result["url"]}
+
+You are already registered. Send heartbeats every 60 seconds to stay active:
+curl -X POST {HIVE_URL}/api/agent/heartbeat \\
+  -H "X-API-Key: {api_key}"
+
+Report task completion:
+curl -X POST {HIVE_URL}/api/delegate/{{delegation_id}}/complete \\
+  -H "X-API-Key: {api_key}" \\
+  -H "Content-Type: application/json" \\
+  -d '{{"tokens_used": 1.0, "result": {{"output": "Task completed successfully"}}}}'
+
+Your capabilities: {', '.join([s.name for s in resolved_skills])}"""
+        
         return {
             "agent_id": agent.id,
             "slug": agent.slug,
@@ -429,6 +452,8 @@ async def deploy_openclaw_agent(
             "api_key": api_key,
             "skills": [s.name for s in resolved_skills],
             "message": result["message"],
+            "registration_prompt": registration_prompt,
+            "hive_url": HIVE_URL,
         }
     else:
         agent.status = AgentStatus.ERROR.value
@@ -450,7 +475,7 @@ async def update_model_api_keys(
     allowed_providers = [
         "openai", "anthropic", "openrouter", "google", "cohere",
     ]
-    filtered_keys = {k: v for k, v in keys.items() if k in allowed_providers}
+    filtered_keys = {k: v for k, v in keys.items() if k in allowed_providers and isinstance(v, str) and v.strip()}
     
     # Encrypt and store
     encrypted = fernet.encrypt(json.dumps(filtered_keys).encode())

@@ -25,8 +25,10 @@
                 <div class="flex items-center space-x-4">
                     <a href="/agents" class="text-gray-600 hover:text-gray-900">Browse</a>
                     <template x-if="isAuthenticated">
-                        <a href="/deploy" class="bg-green-600 text-white px-4 py-2 rounded-md">Deploy Agent</a>
-                        <button @click="logout()" class="text-gray-600 hover:text-gray-900">Logout</button>
+                        <div class="flex items-center space-x-2">
+                            <a href="/deploy" class="bg-green-600 text-white px-4 py-2 rounded-md">Deploy Agent</a>
+                            <button @click="logout()" class="text-gray-600 hover:text-gray-900">Logout</button>
+                        </div>
                     </template>
                 </div>
             </div>
@@ -64,16 +66,28 @@
                         </div>
                         <p class="text-gray-600 mt-2" x-text="agent.description || 'No description provided'"> </p>
                     </div>
-                    <div class="flex items-center space-x-2" x-show="isOwner">
-                        <button @click="restartAgent()" :disabled="restarting"
-                                class="bg-gray-100 text-gray-700 px-4 py-2 rounded-md hover:bg-gray-200 disabled:opacity-50">
-                            <span x-show="!restarting">Restart</span>
-                            <span x-show="restarting">...</span>
-                        </button>
-                        <button @click="deleteAgent()" 
-                                class="bg-red-100 text-red-700 px-4 py-2 rounded-md hover:bg-red-200">
-                            Delete
-                        </button>
+                    <div class="flex items-center space-x-2">
+                        <!-- Delegate button — visible to authenticated users for public agents -->
+                        <template x-if="isAuthenticated && agent.is_public">
+                            <a :href="`/delegate?agent_id=${agent.id}`"
+                               class="bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700">
+                                Delegate Task
+                            </a>
+                        </template>
+                        <!-- Owner controls -->
+                        <template x-if="isOwner">
+                            <div class="flex items-center space-x-2">
+                                <button @click="restartAgent()" :disabled="restarting"
+                                        class="bg-gray-100 text-gray-700 px-4 py-2 rounded-md hover:bg-gray-200 disabled:opacity-50">
+                                    <span x-show="!restarting">Restart</span>
+                                    <span x-show="restarting">...</span>
+                                </button>
+                                <button @click="deleteAgent()"
+                                        class="bg-red-100 text-red-700 px-4 py-2 rounded-md hover:bg-red-200">
+                                    Delete
+                                </button>
+                            </div>
+                        </template>
                     </div>
                 </div>
 
@@ -151,21 +165,38 @@
                 },
                 
                 async loadAgent() {
+                    // Support both /agent-detail?id=xxx and /agents/xxx URL patterns
                     const params = new URLSearchParams(window.location.search);
-                    const agentId = params.get('id');
-                    
+                    let agentId = params.get('id') || params.get('agent_id');
+                    if (!agentId) {
+                        // Try to extract from path: /agents/{id}
+                        const match = window.location.pathname.match(/\/agents\/([^/]+)/);
+                        if (match) agentId = match[1];
+                    }
+
                     if (!agentId) {
                         this.loading = false;
                         return;
                     }
-                    
+
                     try {
                         const res = await fetch(`/api/agents/${agentId}`);
                         if (res.ok) {
                             this.agent = await res.json();
-                            // Check if current user is owner
-                            // We'll need to fetch current user or decode JWT
-                            // For now, assume not owner unless we have more info
+
+                            // Determine if the current user owns this agent
+                            if (this.isAuthenticated) {
+                                try {
+                                    const token = localStorage.getItem('token');
+                                    const userRes = await fetch('/api/auth/me', {
+                                        headers: { 'Authorization': `Bearer ${token}` }
+                                    });
+                                    if (userRes.ok) {
+                                        const user = await userRes.json();
+                                        this.isOwner = (this.agent.owner_id === user.id);
+                                    }
+                                } catch (_) {}
+                            }
                         }
                     } catch (e) {
                         console.error('Failed to load agent:', e);

@@ -42,14 +42,30 @@ async def submit_review(
             detail="Can only review completed delegations"
         )
     
-    # Verify user owns the delegating agent (i.e. they paid)
+    # Verify user is the delegator (works for both human→agent and agent→agent)
     from models.agent import Agent
-    delegating_agent_result = await db.execute(
-        select(Agent).where(Agent.id == delegation.delegating_agent_id)
-    )
-    delegating_agent = delegating_agent_result.scalar_one_or_none()
-    
-    if not delegating_agent or delegating_agent.owner_id != current_user.id:
+    from models.wallet import Wallet
+
+    authorized = False
+
+    if delegation.delegating_agent_id:
+        # Agent-to-agent: check the delegating agent belongs to this user
+        delegating_agent_result = await db.execute(
+            select(Agent).where(Agent.id == delegation.delegating_agent_id)
+        )
+        delegating_agent = delegating_agent_result.scalar_one_or_none()
+        if delegating_agent and delegating_agent.owner_id == current_user.id:
+            authorized = True
+    else:
+        # Human-to-agent: delegating_agent_id is None; verify via wallet ownership
+        user_wallet_result = await db.execute(
+            select(Wallet).where(Wallet.user_id == current_user.id)
+        )
+        user_wallet = user_wallet_result.scalar_one_or_none()
+        if user_wallet and delegation.from_wallet_id == user_wallet.id:
+            authorized = True
+
+    if not authorized:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only the user who paid for work can review"

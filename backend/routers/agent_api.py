@@ -2,9 +2,10 @@
 import hmac
 from datetime import datetime, timezone
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Request, status, Header
+from fastapi import APIRouter, Body, Depends, HTTPException, Request, status, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from database import get_db
 from models.agent import Agent, AgentStatus, AgentType
@@ -12,7 +13,8 @@ from models.skill import Skill
 from models.agent_skill import AgentSkill
 from models.user import User
 from schemas import (
-    AgentRegistrationResponse, 
+    AgentRegistrationResponse,
+    AgentHeartbeatRequest,
     AgentHeartbeatResponse,
     AgentCreate,
     AgentProfileUpdate,
@@ -26,29 +28,30 @@ from services.skill_discovery import discover_and_sync_skills
 
 router = APIRouter(prefix="/api/agent", tags=["agent-api"])
 
-# Rate limiting for self-registration (imported from existing code)
-from services.health_checker import generate_health_check_token
-
 
 async def get_agent_from_api_key(
     x_api_key: str = Header(..., alias="X-API-Key"),
     db: AsyncSession = Depends(get_db)
 ) -> Agent:
-    """Dependency to get agent from API key header."""
-    from sqlalchemy import select
-    
-    # Hash the provided key and look it up
-    # Actually, we need to check all agents - inefficient but works for POC
-    # In production, use a faster lookup method
-    result = await db.execute(select(Agent))
-    agents = result.scalars().all()
-    
-    for agent in agents:
-        # Verify password-style hash
-        from auth import verify_password
+    """
+    Dependency to get agent from API key header.
+
+    Uses a stored key-prefix to narrow the candidate set to ≈1 row before
+    running the expensive bcrypt verify, giving O(1) amortised lookup.
+    """
+    from auth import verify_password
+
+    # Keys are formatted "am-<token>" — the prefix is the first 16 chars.
+    prefix = x_api_key[:16]
+    result = await db.execute(
+        select(Agent).where(Agent.api_key_prefix == prefix)
+    )
+    candidates = result.scalars().all()
+
+    for agent in candidates:
         if verify_password(x_api_key, agent.api_key_hash):
             return agent
-    
+
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid API key"
@@ -96,6 +99,7 @@ async def register_agent(
         capabilities=agent_data.capabilities or [],
         tags=agent_data.tags or [],
         agent_type=agent_type,
+        api_key_prefix=api_key[:16],
         api_key_hash=api_key_hash,
         endpoint_url=agent_data.endpoint_url or f"/agents/placeholder/invoke",
         status=AgentStatus.ACTIVE.value if is_external else AgentStatus.PENDING.value,
@@ -144,18 +148,26 @@ async def register_agent(
 @router.post("/heartbeat", response_model=AgentHeartbeatResponse)
 async def agent_heartbeat(
     agent: Agent = Depends(get_agent_from_api_key),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    heartbeat: Optional[AgentHeartbeatRequest] = Body(default=None)
 ):
-    """Agent heartbeat - updates last_seen timestamp."""
+    """
+    Agent heartbeat - updates last_seen timestamp.
+
+    Accepts an optional JSON body with `ready: bool` (default true) so agents
+    can signal they are busy and should not receive new delegations.
+    """
     agent.last_seen = datetime.now(timezone.utc)
     agent.status = AgentStatus.ACTIVE.value
+    agent.ready = heartbeat.ready if heartbeat is not None else True
     await db.commit()
-    
-    print(f"❤️‍🩹 Heartbeat: {agent.name} (ID: {agent.id}) - Status: {agent.status}")
-    
+
+    print(f"❤️‍🩹 Heartbeat: {agent.name} (ID: {agent.id}) - ready={agent.ready}")
+
     return AgentHeartbeatResponse(
         status="active",
-        message="Heartbeat received"
+        message="Heartbeat received",
+        ready=agent.ready
     )
 
 
@@ -165,14 +177,14 @@ async def get_agent_profile(
     db: AsyncSession = Depends(get_db)
 ):
     """Get current agent's profile."""
-    # Load skills
+    # Eager-load skill relationship to avoid MissingGreenlet in async context
     result = await db.execute(
         select(AgentSkill)
+        .options(selectinload(AgentSkill.skill))
         .where(AgentSkill.agent_id == agent.id)
-        .join(Skill)
     )
     agent_skills = result.scalars().all()
-    
+
     return {
         "id": agent.id,
         "name": agent.name,
@@ -182,15 +194,17 @@ async def get_agent_profile(
         "tags": agent.tags or [],
         "description": agent.description,
         "status": agent.status,
+        "ready": agent.ready if agent.ready is not None else True,
         "endpoint_url": agent.endpoint_url,
         "skills": [
             {
                 "id": askill.skill.id,
                 "name": askill.skill.name,
-                "display_name": askill.skill.display_name
+                "display_name": askill.skill.display_name,
             }
             for askill in agent_skills
-        ]
+            if askill.skill is not None
+        ],
     }
 
 
@@ -245,7 +259,7 @@ async def update_agent_visibility(
         "is_public": agent.is_public,
         "marketplace_description": agent.marketplace_description,
         "pricing_model": agent.pricing_model,
-        "message": f"Agent is now {'public' if is_public else 'private'}"
+        "message": f"Agent is now {'public' if agent.is_public else 'private'}"
     }
 
 
@@ -304,6 +318,7 @@ async def recover_credentials(
     # Generate new API key (old one is lost forever)
     import secrets
     new_api_key = f"am-{secrets.token_urlsafe(32)}"
+    agent.api_key_prefix = new_api_key[:16]
     agent.api_key_hash = get_password_hash(new_api_key)
     
     # Generate new health check token too (for security)

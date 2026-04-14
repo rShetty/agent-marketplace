@@ -275,6 +275,7 @@ async def accept_agent_invite(
         capabilities=accept_data.capabilities or [],
         tags=accept_data.tags or [],
         agent_type=invite.agent_type,
+        api_key_prefix=api_key[:16],
         api_key_hash=api_key_hash,
         endpoint_url=accept_data.endpoint_url,
         status=AgentStatus.ACTIVE.value,

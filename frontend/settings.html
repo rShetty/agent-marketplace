@@ -65,7 +65,7 @@
                     <p class="text-xs text-gray-500 mt-1">For accessing multiple models through OpenRouter</p>
                 </div>
 
-                <div x-show="message"
+                <div x-show="message" :class="messageClass" class="p-3 rounded-md text-sm" x-text="message"></div>
 
                 <div class="flex justify-end">
                     <button type="submit" :disabled="saving"

@@ -1,6 +1,9 @@
 """HTTP client for making requests to external agents."""
 import os
+import hmac
+import hashlib
 import asyncio
+import time
 from typing import Dict, Any, Optional
 import aiohttp
 from datetime import datetime
@@ -21,16 +24,19 @@ class AgentConnectionError(AgentClientError):
     pass
 
 
+HIVE_SIGNING_SECRET = os.getenv("HIVE_SIGNING_SECRET", "change-me-in-production")
+
+
+def _make_signature(body: bytes, timestamp: str) -> str:
+    """HMAC-SHA256 signature for an outbound delegation payload."""
+    message = f"{timestamp}.".encode() + body
+    return hmac.new(HIVE_SIGNING_SECRET.encode(), message, hashlib.sha256).hexdigest()
+
+
 class AgentClient:
     """Client for making HTTP requests to agents."""
-    
+
     def __init__(self, timeout: int = 300):
-        """
-        Initialize agent client.
-        
-        Args:
-            timeout: Request timeout in seconds (default 5 minutes)
-        """
         self.timeout = timeout
         self.marketplace_url = os.getenv("MARKETPLACE_URL", "http://localhost:8000")
     
@@ -84,15 +90,22 @@ class AgentClient:
                 target_endpoint = target_endpoint + "/delegate"
         
         try:
+            import json as _json
+            body_bytes = _json.dumps(payload, separators=(",", ":")).encode()
+            ts = str(int(time.time()))
+            sig = _make_signature(body_bytes, ts)
+
             async with aiohttp.ClientSession() as session:
                 async with session.post(
                     target_endpoint,
-                    json=payload,
+                    data=body_bytes,
                     timeout=aiohttp.ClientTimeout(total=request_timeout),
                     headers={
                         "Content-Type": "application/json",
                         "X-Hive-Delegation-ID": delegation_id,
-                        "User-Agent": "Hive-Marketplace/1.0"
+                        "X-Hive-Timestamp": ts,
+                        "X-Hive-Signature": f"sha256={sig}",
+                        "User-Agent": "Hive-Marketplace/1.0",
                     }
                 ) as response:
                     response.raise_for_status()

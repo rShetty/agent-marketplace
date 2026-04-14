@@ -2,7 +2,7 @@
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, desc, asc, nullslast
 from sqlalchemy.orm import selectinload
 
 from database import get_db
@@ -21,7 +21,7 @@ async def list_marketplace_agents(
     min_rating: Optional[float] = None,
     tags: Optional[str] = None,
     search: Optional[str] = None,
-    sort: str = Query("rating", regex="^(rating|recent|name)$"),
+    sort: str = Query("rating", pattern="^(rating|recent|name)$"),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db)
@@ -54,10 +54,6 @@ async def list_marketplace_agents(
             (Agent.description.ilike(search_filter))
         )
     
-    if tags:
-        tag_list = [t.strip() for t in tags.split(",")]
-        # SQLite JSON filtering is limited, filter in Python after fetch
-    
     if skill:
         query = query.join(AgentSkill).join(AgentSkill.skill).where(
             AgentSkill.skill.has(name=skill)
@@ -70,16 +66,25 @@ async def list_marketplace_agents(
     
     # Sorting
     if sort == "recent":
-        query = query.order_by(Agent.last_seen.desc().nullslast())
+        query = query.order_by(nullslast(desc(Agent.last_seen)))
     elif sort == "name":
-        query = query.order_by(Agent.name.asc())
-    else:  # rating
-        query = query.order_by(Agent.created_at.desc())  # TODO: Add rating sort
+        query = query.order_by(asc(Agent.name))
+    else:  # rating — use a correlated subquery for average review rating
+        avg_rating_subq = (
+            select(func.avg(AgentReview.rating))
+            .where(AgentReview.agent_id == Agent.id)
+            .correlate(Agent)
+            .scalar_subquery()
+        )
+        query = query.order_by(nullslast(desc(avg_rating_subq)))
     
     query = query.limit(limit).offset(offset)
     result = await db.execute(query)
     agents = result.scalars().unique().all()
     
+    # Parse tag filter once (outside the loop)
+    tag_filter = [t.strip() for t in tags.split(",")] if tags else None
+
     # Enrich with ratings
     agent_cards = []
     for agent in agents:
@@ -89,7 +94,13 @@ async def list_marketplace_agents(
             .where(AgentReview.agent_id == agent.id)
         )
         avg_rating, review_count = rating_result.one()
-        
+
+        # Filter by tags: agent must have ALL requested tags
+        if tag_filter:
+            agent_tags = agent.tags or []
+            if not all(t in agent_tags for t in tag_filter):
+                continue
+
         # Filter by pricing if specified
         if max_cost and agent.pricing_model:
             if agent.pricing_model.get("type") == "token":
@@ -110,6 +121,7 @@ async def list_marketplace_agents(
             "pricing_model": agent.pricing_model,
             "tags": agent.tags or [],
             "status": agent.status,
+            "ready": agent.ready if agent.ready is not None else True,
             "owner_id": agent.owner_id,
             "last_seen": agent.last_seen,
             "average_rating": float(avg_rating) if avg_rating else None,

@@ -87,8 +87,20 @@ async def list_agents(
     result = await db.execute(query)
     agents = result.scalars().unique().all()
     
+    # Fetch owner info for each agent
+    items = []
+    for agent in agents:
+        agent_dict = AgentResponse.model_validate(agent).model_dump()
+        if agent.owner_id:
+            owner_result = await db.execute(select(User).where(User.id == agent.owner_id))
+            owner = owner_result.scalar_one_or_none()
+            if owner:
+                agent_dict["owner_name"] = owner.name
+                agent_dict["owner_email"] = owner.email
+        items.append(agent_dict)
+    
     return {
-        "items": [AgentResponse.model_validate(agent) for agent in agents],
+        "items": items,
         "total": total_count,
         "limit": limit,
         "offset": offset
@@ -114,7 +126,16 @@ async def get_agent(agent_id: str, db: AsyncSession = Depends(get_db)):
     # Update calculated status
     agent.status = agent.calculate_status().value
     
-    return agent
+    # Include owner info
+    agent_dict = AgentDetailResponse.model_validate(agent).model_dump()
+    if agent.owner_id:
+        owner_result = await db.execute(select(User).where(User.id == agent.owner_id))
+        owner = owner_result.scalar_one_or_none()
+        if owner:
+            agent_dict["owner_name"] = owner.name
+            agent_dict["owner_email"] = owner.email
+    
+    return agent_dict
 
 
 @router.get("/{agent_id}/skills", response_model=List[dict])
@@ -138,6 +159,80 @@ async def get_agent_skills(agent_id: str, db: AsyncSession = Depends(get_db)):
         }
         for askill in agent_skills
     ]
+
+
+@router.get("/{agent_id}/card")
+async def get_agent_card(agent_id: str, db: AsyncSession = Depends(get_db)):
+    """
+    Return an A2A-compatible AgentCard for the given agent.
+
+    Follows the Google Agent2Agent (A2A) protocol specification:
+    https://google.github.io/A2A
+
+    The card is intended to be machine-readable so other agents can discover
+    this agent's capabilities, authentication requirements, and delegation endpoint.
+    """
+    result = await db.execute(
+        select(Agent)
+        .options(selectinload(Agent.skills).selectinload(AgentSkill.skill))
+        .where(Agent.id == agent_id)
+    )
+    agent = result.scalar_one_or_none()
+
+    if not agent:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+
+    if not agent.is_public:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Agent is not public")
+
+    marketplace_url = __import__("os").getenv("MARKETPLACE_URL", "http://localhost:8000")
+    agent_base_url = agent.endpoint_url or f"{marketplace_url}/agents/{agent.id}"
+
+    skills_cards = []
+    for askill in agent.skills:
+        if askill.skill:
+            skills_cards.append({
+                "id": askill.skill.name,
+                "name": askill.skill.display_name,
+                "description": askill.skill.description,
+                "tags": [askill.skill.category, askill.skill.tier],
+                "examples": [],
+            })
+
+    card = {
+        # A2A required fields
+        "name": agent.name,
+        "description": agent.description or agent.marketplace_description or "",
+        "url": agent_base_url,
+        "version": agent.version or "1.0.0",
+        # Authentication — Hive delegates carry a Bearer JWT
+        "authentication": {
+            "schemes": ["Bearer"],
+            "credentials": None,
+        },
+        # Streaming supported via SSE
+        "capabilities": {
+            "streaming": True,
+            "pushNotifications": True,
+            "stateTransitionHistory": False,
+        },
+        # Skills / tools this agent exposes
+        "skills": skills_cards,
+        # Hive-specific extensions
+        "x-hive": {
+            "agent_id": agent.id,
+            "slug": agent.slug,
+            "avatar_url": agent.avatar_url,
+            "tags": agent.tags or [],
+            "capabilities": agent.capabilities or [],
+            "status": agent.status,
+            "pricing_model": agent.pricing_model,
+            "delegation_endpoint": f"{marketplace_url}/api/delegate",
+            "marketplace_url": f"{marketplace_url}/api/marketplace/agents/{agent.id}",
+        },
+    }
+
+    return card
 
 
 @router.post("/{agent_id}/discover-skills")

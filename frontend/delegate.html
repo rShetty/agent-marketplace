@@ -153,14 +153,12 @@
                             <div class="flex items-center justify-between p-3 bg-gray-50 rounded-md">
                                 <div>
                                     <div class="font-medium text-gray-900" x-text="agent.name"></div>
-                                    <div class="text-xs text-gray-500" x-text="agent.api_key?.substring(0, 20) + '...'"></div>
+                                    <div class="text-xs text-gray-500" x-text="`${agent.status} · ${agent.agent_type}`"></div>
                                 </div>
-                                <button 
-                                    @click="copyAgentApiKey(agent.api_key)"
-                                    class="text-indigo-600 hover:text-indigo-800 text-sm"
-                                >
-                                    Copy API Key
-                                </button>
+                                <a :href="`/agent-detail?id=${agent.id}`"
+                                   class="text-indigo-600 hover:text-indigo-800 text-sm">
+                                    View
+                                </a>
                             </div>
                         </template>
                         <div x-show="myAgents.length === 0" class="text-sm text-gray-500">
@@ -299,7 +297,15 @@
                     this.checkAuth();
                     if (this.isAuthenticated) {
                         this.loadWallet();
-                        this.loadAgents();
+                        this.loadAgents().then(() => {
+                            // Pre-select agent if navigated from agent detail page
+                            const params = new URLSearchParams(window.location.search);
+                            const preselect = params.get('agent_id');
+                            if (preselect) {
+                                this.taskForm.selectedAgentId = preselect;
+                                this.selectAgent();
+                            }
+                        });
                         this.loadMyAgents();
                     }
                 },
@@ -315,7 +321,7 @@
 
                 async loadWallet() {
                     try {
-                        const res = await apiFetch('/api/wallet');
+                        const res = await apiFetch('/api/wallet/balance');
                         if (res.ok) {
                             const data = await res.json();
                             this.walletBalance = data.balance;
@@ -328,10 +334,11 @@
 
                 async loadAgents() {
                     try {
-                        const res = await apiFetch('/api/agents?status=active&limit=50');
+                        // Use the marketplace endpoint — returns only public, active/idle agents
+                        const res = await apiFetch('/api/marketplace/agents?sort=recent&limit=50');
                         if (res.ok) {
                             const data = await res.json();
-                            this.agents = data.items.filter(a => a.is_public);
+                            this.agents = data.items;
                         }
                     } catch (e) {
                         console.error('Failed to load agents:', e);
@@ -340,7 +347,14 @@
 
                 async loadMyAgents() {
                     try {
-                        const res = await apiFetch('/api/agents?owner_id=me');
+                        // Decode user_id from JWT payload (middle segment, base64url-encoded JSON)
+                        const token = localStorage.getItem('token');
+                        if (!token) return;
+                        const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+                        const userId = payload.sub;
+                        if (!userId) return;
+
+                        const res = await apiFetch(`/api/agents?owner_id=${encodeURIComponent(userId)}&limit=50`);
                         if (res.ok) {
                             const data = await res.json();
                             this.myAgents = data.items;
@@ -422,8 +436,9 @@
 
                     this.isStreaming = true;
                     
-                    // Use user streaming endpoint with JWT authentication
-                    const url = `/api/delegate/${delegationId}/user-stream`;
+                    // Pass JWT as query param because EventSource cannot set headers
+                    const token = getToken();
+                    const url = `/api/delegate/${delegationId}/user-stream?token=${encodeURIComponent(token)}`;
                     this.eventSource = new EventSource(url);
 
                     this.eventSource.onmessage = (event) => {
@@ -488,11 +503,6 @@
                     }
                     this.isStreaming = false;
                     this.activeDelegation = null;
-                },
-
-                copyAgentApiKey(apiKey) {
-                    navigator.clipboard.writeText(apiKey);
-                    alert('API key copied to clipboard!');
                 },
 
                 formatTimestamp(timestamp) {

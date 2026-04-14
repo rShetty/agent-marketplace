@@ -80,6 +80,80 @@ async def health_check():
     return {"status": "healthy", "service": "agent-marketplace"}
 
 
+@app.get("/.well-known/agent.json")
+async def well_known_agent_card():
+    """
+    Platform-level A2A AgentCard for the Hive marketplace itself.
+
+    External orchestrators can discover the marketplace via this well-known URL
+    and learn how to register agents or delegate tasks.
+    """
+    marketplace_url = os.getenv("MARKETPLACE_URL", "http://localhost:8000")
+    return {
+        "name": "Hive Marketplace",
+        "description": (
+            "An AI agent marketplace where agents self-register, discover each other, "
+            "and delegate work using a token economy."
+        ),
+        "url": marketplace_url,
+        "version": "1.0.0",
+        "authentication": {"schemes": ["Bearer"]},
+        "capabilities": {
+            "streaming": True,
+            "pushNotifications": True,
+            "stateTransitionHistory": False,
+        },
+        "skills": [
+            {
+                "id": "agent-registration",
+                "name": "Agent Registration",
+                "description": "Register a new agent (BYOA or managed) in the marketplace.",
+                "tags": ["registration", "onboarding"],
+            },
+            {
+                "id": "agent-delegation",
+                "name": "Task Delegation",
+                "description": "Delegate a task to a marketplace agent with token payment.",
+                "tags": ["delegation", "task"],
+            },
+            {
+                "id": "agent-discovery",
+                "name": "Agent Discovery",
+                "description": "Browse and search public agents by skill, tag, or rating.",
+                "tags": ["discovery", "marketplace"],
+            },
+        ],
+        "x-hive": {
+            "docs": f"{marketplace_url}/docs",
+            "registration_endpoint": f"{marketplace_url}/api/agent/register",
+            "invite_endpoint": f"{marketplace_url}/api/agent/invite",
+            "marketplace_endpoint": f"{marketplace_url}/api/marketplace/agents",
+            "delegation_endpoint": f"{marketplace_url}/api/delegate",
+        },
+    }
+
+
+@app.get("/.well-known/jwks.json")
+async def well_known_jwks():
+    """
+    JWKS endpoint — advertises the signing algorithm used by Hive JWTs.
+
+    Hive uses HS256 (symmetric HMAC-SHA256) for access tokens.  HS256 keys are
+    shared secrets and cannot be published; this endpoint therefore returns an
+    empty key set and documents the algorithm for A2A-aware clients.
+
+    Agents that need to verify Hive tokens should use the shared
+    HIVE_SIGNING_SECRET environment variable out-of-band.
+    """
+    return {
+        "keys": [],
+        "_comment": (
+            "Hive uses HS256 (symmetric). Public keys are not applicable. "
+            "Token verification requires the shared HIVE_SIGNING_SECRET."
+        ),
+    }
+
+
 @app.get("/api/metrics")
 async def get_metrics():
     """Get service metrics (for monitoring/admin)."""
@@ -104,85 +178,65 @@ if frontend_path and os.path.exists(frontend_path):
         app.mount("/js", StaticFiles(directory=os.path.join(frontend_path, "js")), name="js")
 
 
+def _serve_frontend(filename: str):
+    """Return the given frontend HTML file, or raise 404."""
+    if not frontend_path:
+        raise HTTPException(status_code=404, detail="Frontend not available")
+    path = os.path.join(frontend_path, filename)
+    if os.path.exists(path):
+        return FileResponse(path)
+    raise HTTPException(status_code=404, detail="Page not found")
+
+
 @app.get("/")
 async def root():
     """Serve the main frontend page."""
-    frontend_file = os.path.join(frontend_path, "index.html")
-    if os.path.exists(frontend_file):
-        return FileResponse(frontend_file)
-    return {"message": "Agent Marketplace API", "docs": "/docs"}
+    if not frontend_path:
+        return {"message": "Hive Agent Marketplace API", "docs": "/docs"}
+    path = os.path.join(frontend_path, "index.html")
+    if os.path.exists(path):
+        return FileResponse(path)
+    return {"message": "Hive Agent Marketplace API", "docs": "/docs"}
 
 
 @app.get("/agents")
 async def agents_page():
-    """Serve the agents listing page."""
-    frontend_file = os.path.join(frontend_path, "agents.html")
-    if os.path.exists(frontend_file):
-        return FileResponse(frontend_file)
-    raise HTTPException(status_code=404, detail="Page not found")
+    return _serve_frontend("agents.html")
 
 
 @app.get("/agents/{agent_id}")
 async def agent_detail_page_by_id(agent_id: str):
-    """Serve the agent detail page."""
-    frontend_file = os.path.join(frontend_path, "agent-detail.html")
-    if os.path.exists(frontend_file):
-        return FileResponse(frontend_file)
-    raise HTTPException(status_code=404, detail="Page not found")
+    return _serve_frontend("agent-detail.html")
 
 
 @app.get("/agent-detail")
 async def agent_detail_page():
-    """Serve the agent detail page (query param version)."""
-    frontend_file = os.path.join(frontend_path, "agent-detail.html")
-    if os.path.exists(frontend_file):
-        return FileResponse(frontend_file)
-    raise HTTPException(status_code=404, detail="Page not found")
+    return _serve_frontend("agent-detail.html")
 
 
 @app.get("/login")
 async def login_page():
-    """Serve the login page."""
-    frontend_file = os.path.join(frontend_path, "login.html")
-    if os.path.exists(frontend_file):
-        return FileResponse(frontend_file)
-    raise HTTPException(status_code=404, detail="Page not found")
+    return _serve_frontend("login.html")
 
 
 @app.get("/signup")
 async def signup_page():
-    """Serve the signup page."""
-    frontend_file = os.path.join(frontend_path, "signup.html")
-    if os.path.exists(frontend_file):
-        return FileResponse(frontend_file)
-    raise HTTPException(status_code=404, detail="Page not found")
+    return _serve_frontend("signup.html")
 
 
 @app.get("/deploy")
 async def deploy_page():
-    """Serve the deploy page."""
-    frontend_file = os.path.join(frontend_path, "deploy.html")
-    if os.path.exists(frontend_file):
-        return FileResponse(frontend_file)
-    raise HTTPException(status_code=404, detail="Page not found")
+    return _serve_frontend("deploy.html")
 
 
 @app.get("/settings")
 async def settings_page():
-    """Serve the settings page."""
-    frontend_file = os.path.join(frontend_path, "settings.html")
-    if os.path.exists(frontend_file):
-        return FileResponse(frontend_file)
-    raise HTTPException(status_code=404, detail="Page not found")
+    return _serve_frontend("settings.html")
 
 
 @app.get("/delegate")
 async def delegate_page():
-    """Serve the delegation page."""
-    frontend_file = os.path.join(frontend_path, "delegate.html")
-    if os.path.exists(frontend_file):
-        return FileResponse(frontend_file)
-    raise HTTPException(status_code=404, detail="Page not found")
+    return _serve_frontend("delegate.html")
 
 
 @app.get("/agents/{agent_id}/health")
