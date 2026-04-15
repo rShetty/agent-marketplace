@@ -188,6 +188,15 @@ async def get_agent_config(
         for s in skills_result.scalars()
     ]
 
+    from services.openclaw_deployer import HIVE_DOMAIN, HIVE_URL as _HIVE_URL
+    hive_url = _HIVE_URL or os.getenv("HIVE_URL", "")
+    dashboard_url = None
+    if agent.slug:
+        if HIVE_DOMAIN:
+            dashboard_url = f"https://{agent.slug}.{HIVE_DOMAIN}"
+        elif hive_url:
+            dashboard_url = f"{hive_url}/a/{agent.slug}/"
+
     return {
         "agent_id": agent_id,
         "agent_name": agent.name,
@@ -195,6 +204,8 @@ async def get_agent_config(
         "status": agent.status,
         "endpoint_url": agent.endpoint_url,
         "port": agent.internal_port,
+        "dashboard_url": dashboard_url,
+        "slug": agent.slug,
         "llm_providers_configured": llm_providers,
         "integrations": {
             "telegram": {"configured": telegram_configured},

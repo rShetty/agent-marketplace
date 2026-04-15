@@ -177,14 +177,17 @@ services:
     build: .
     image: ${IMAGE_NAME}:latest
     ports:
-      - "0.0.0.0:${REMOTE_PORT}:${REMOTE_PORT}"
+      - "127.0.0.1:${REMOTE_PORT}:${REMOTE_PORT}"
     environment:
       - PORT=${REMOTE_PORT}
       - DATABASE_URL=sqlite+aiosqlite:////app/data/agent_marketplace.db
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - SECRET_KEY=${SECRET_KEY}
-      - HIVE_URL=http://${REMOTE_SERVER}:${REMOTE_PORT}
-      - ALLOWED_ORIGINS=http://${REMOTE_SERVER}:${REMOTE_PORT},http://localhost:${REMOTE_PORT}
+      - HIVE_URL=${HIVE_URL_OVERRIDE:-http://${REMOTE_SERVER}:${REMOTE_PORT}}
+      - HIVE_DOMAIN=${HIVE_DOMAIN:-}
+      - HIVE_SSL_CERT=${HIVE_SSL_CERT:-}
+      - HIVE_SSL_KEY=${HIVE_SSL_KEY:-}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS_OVERRIDE:-http://${REMOTE_SERVER}:${REMOTE_PORT},http://localhost:${REMOTE_PORT}}
       - OPENCLAW_VPS_HOST=${OC_HOST}
       - OPENCLAW_VPS_SSH_KEY_PATH=/root/.ssh/openclaw_deploy_key
       - OPENCLAW_VPS_SSH_USER=${OC_SSH_USER}

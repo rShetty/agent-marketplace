@@ -16,6 +16,13 @@ OPENCLAW_IMAGE = os.getenv("OPENCLAW_IMAGE", "openclaw/openclaw:latest")
 OPENCLAW_INTERNAL_PORT = 9000
 OPENCLAW_MOCK_MODE = os.getenv("OPENCLAW_MOCK_MODE", "").lower() in ("1", "true", "yes")
 HIVE_URL = os.getenv("HIVE_URL", "http://localhost:8080")
+# Base domain for per-agent subdomains. If set, each agent gets {slug}.{HIVE_DOMAIN}.
+# nginx + certbot will be configured automatically on the VPS.
+HIVE_DOMAIN = os.getenv("HIVE_DOMAIN", "")
+# Path to the existing wildcard or SAN cert to reuse (avoids certbot per deploy).
+# If empty, certbot will try to issue a cert for the specific subdomain.
+HIVE_SSL_CERT = os.getenv("HIVE_SSL_CERT", "")
+HIVE_SSL_KEY = os.getenv("HIVE_SSL_KEY", "")
 
 
 def generate_compose(
@@ -52,7 +59,7 @@ services:
     container_name: openclaw-{instance_id[:8]}
     restart: unless-stopped
     ports:
-      - "{port}:{OPENCLAW_INTERNAL_PORT}"
+      - "127.0.0.1:{port}:{OPENCLAW_INTERNAL_PORT}"
     environment:
       - INSTANCE_ID={instance_id}
       - AGENT_ID={agent_id}
@@ -74,6 +81,7 @@ async def deploy_to_vps(
     port: int,
     ssh_user: str = "root",
     ssh_port: int = 22,
+    agent_slug: Optional[str] = None,
 ) -> dict:
     """
     Deploy an OpenClaw Docker Compose stack to a remote VPS via SSH.
@@ -180,10 +188,24 @@ async def deploy_to_vps(
                 "message": f"docker compose up failed: {stderr.decode()}",
             }
 
+        # Provision nginx subdomain + SSL if domain is configured
+        dashboard_url = f"http://{vps_host}:{port}"
+        if HIVE_DOMAIN and agent_slug:
+            subdomain_result = await _provision_nginx_subdomain(
+                ssh_opts=ssh_opts,
+                scp_opts=scp_opts,
+                target=target,
+                slug=agent_slug,
+                port=port,
+            )
+            if subdomain_result.get("url"):
+                dashboard_url = subdomain_result["url"]
+
         return {
             "success": True,
             "message": "OpenClaw deployed successfully",
             "url": f"http://{vps_host}:{port}",
+            "dashboard_url": dashboard_url,
             "remote_dir": remote_dir,
         }
 
@@ -192,6 +214,117 @@ async def deploy_to_vps(
 
     finally:
         os.unlink(local_compose)
+
+
+async def _provision_nginx_subdomain(
+    ssh_opts: str,
+    scp_opts: str,
+    target: str,
+    slug: str,
+    port: int,
+) -> dict:
+    """
+    Create an nginx server block for {slug}.{HIVE_DOMAIN} → localhost:{port}
+    and provision an SSL cert via certbot.
+
+    Uses the existing hive.rajeev.me cert if HIVE_SSL_CERT / HIVE_SSL_KEY are
+    set (wildcard case). Otherwise falls back to certbot --nginx.
+    The dashboard is proxied via Hive at /a/{slug}/ so nginx points to Hive (port 8080),
+    not directly to the container — this keeps authentication in place.
+    """
+    subdomain = f"{slug}.{HIVE_DOMAIN}"
+    # Proxy to Hive's authenticated dashboard proxy, not directly to the container
+    hive_port = int(HIVE_URL.split(":")[-1]) if ":" in HIVE_URL else 8080
+
+    # If a wildcard cert is configured reuse it; otherwise run certbot
+    if HIVE_SSL_CERT and HIVE_SSL_KEY:
+        ssl_block = f"""
+    ssl_certificate {HIVE_SSL_CERT};
+    ssl_certificate_key {HIVE_SSL_KEY};"""
+        needs_certbot = False
+    else:
+        ssl_block = f"""
+    ssl_certificate /etc/letsencrypt/live/{subdomain}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/{subdomain}/privkey.pem;"""
+        needs_certbot = True
+
+    nginx_conf = f"""\
+server {{
+    listen 80;
+    server_name {subdomain};
+    return 301 https://$host$request_uri;
+}}
+
+server {{
+    listen 443 ssl;
+    server_name {subdomain};
+{ssl_block}
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+
+    location / {{
+        proxy_pass http://127.0.0.1:{hive_port}/a/{slug}/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host {HIVE_DOMAIN};
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_cache_bypass $http_upgrade;
+    }}
+}}
+"""
+    conf_path = f"/etc/nginx/sites-available/{slug}.conf"
+    enabled_path = f"/etc/nginx/sites-enabled/{slug}.conf"
+
+    try:
+        # Write nginx config via heredoc over SSH
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".conf", delete=False) as tmp:
+            tmp.write(nginx_conf)
+            local_conf = tmp.name
+
+        proc = await asyncio.create_subprocess_shell(
+            f"scp {scp_opts} {local_conf} {target}:{conf_path}",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await proc.communicate()
+        os.unlink(local_conf)
+        if proc.returncode != 0:
+            return {"url": None, "error": f"Failed to write nginx config: {stderr.decode()}"}
+
+        # Enable site + test + reload nginx
+        proc = await asyncio.create_subprocess_shell(
+            f"ssh {ssh_opts} {target} "
+            f"'ln -sf {conf_path} {enabled_path} && nginx -t && nginx -s reload'",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            return {"url": None, "error": f"nginx reload failed: {stderr.decode()}"}
+
+        # Run certbot if needed (non-blocking best-effort)
+        if needs_certbot:
+            proc = await asyncio.create_subprocess_shell(
+                f"ssh {ssh_opts} {target} "
+                f"'certbot --nginx -d {subdomain} --non-interactive "
+                f"--agree-tos --email admin@{HIVE_DOMAIN} --redirect 2>&1 | tail -5'",
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await proc.communicate()
+            if proc.returncode != 0:
+                # Certbot failed (often DNS not yet propagated) — nginx still works over HTTP
+                return {
+                    "url": f"https://{subdomain}",
+                    "note": f"Nginx configured but certbot failed: {stdout.decode()[:200]}. "
+                            "SSL may not be active yet — retry once DNS propagates.",
+                }
+
+        return {"url": f"https://{subdomain}"}
+
+    except Exception as e:
+        return {"url": None, "error": str(e)}
 
 
 async def teardown_on_vps(

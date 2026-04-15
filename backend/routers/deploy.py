@@ -423,6 +423,7 @@ async def deploy_openclaw_agent(
         port=port,
         ssh_user=OPENCLAW_VPS_SSH_USER,
         ssh_port=OPENCLAW_VPS_SSH_PORT,
+        agent_slug=slug,
     )
 
     if result["success"]:
@@ -455,12 +456,15 @@ curl -X POST {HIVE_URL}/api/delegate/{{delegation_id}}/complete \\
 
 Your capabilities: {', '.join([s.name for s in resolved_skills])}"""
         
+        dashboard_url = result.get("dashboard_url") or result["url"]
+
         return {
             "agent_id": agent.id,
             "slug": agent.slug,
             "agent_type": agent.agent_type,
             "status": agent.status,
             "url": result["url"],
+            "dashboard_url": dashboard_url,
             "port": port,
             "api_key": api_key,
             "skills": [s.name for s in resolved_skills],

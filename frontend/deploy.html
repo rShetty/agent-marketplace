@@ -163,7 +163,23 @@
                 
                 <!-- Success result with registration instructions -->
                 <div x-show="openclawResult" class="mt-6 p-4 bg-green-50 border border-green-200 rounded-lg">
-                    <h3 class="text-lg font-semibold text-green-800 mb-2">OpenClaw Deployed Successfully!</h3>
+                    <h3 class="text-lg font-semibold text-green-800 mb-3">OpenClaw Deployed Successfully!</h3>
+
+                    <!-- Dashboard URL highlight -->
+                    <div class="mb-4 bg-white border border-purple-200 rounded-lg p-3 flex items-center justify-between">
+                        <div class="flex items-center space-x-2">
+                            <span class="text-lg">🌐</span>
+                            <div>
+                                <div class="text-sm font-semibold text-gray-800">Your Agent Dashboard</div>
+                                <code class="text-xs text-purple-700 font-mono" x-text="openclawResult?.dashboard_url || openclawResult?.url"></code>
+                            </div>
+                        </div>
+                        <a :href="openclawResult?.dashboard_url || openclawResult?.url" target="_blank"
+                           class="text-xs bg-purple-600 text-white px-3 py-1.5 rounded-lg hover:bg-purple-700 font-medium">
+                            Open →
+                        </a>
+                    </div>
+
                     <div class="space-y-2 text-sm">
                         <p><strong>Agent ID:</strong> <span x-text="openclawResult?.agent_id"></span></p>
                         <p><strong>URL:</strong> <a :href="openclawResult?.url" x-text="openclawResult?.url" class="text-blue-600 hover:underline" target="_blank"></a></p>

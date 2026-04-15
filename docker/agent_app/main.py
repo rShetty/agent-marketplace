@@ -1,77 +1,421 @@
-"""Simple agent application for marketplace containers."""
+"""Hive OpenClaw agent — HTTP API + web dashboard."""
 import asyncio
 import os
+import json
+from datetime import datetime
 from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
-from typing import List, Dict
+from typing import List, Dict, Any, Optional
 import httpx
 
-app = FastAPI(title="Marketplace Agent")
+app = FastAPI(title="OpenClaw Agent")
 
 AGENT_ID = os.getenv("AGENT_ID", "unknown")
 AGENT_NAME = os.getenv("AGENT_NAME", "Unknown Agent")
-SKILLS = os.getenv("SKILLS", "").split(",") if os.getenv("SKILLS") else []
+SKILLS = [s for s in os.getenv("SKILLS", "").split(",") if s]
 HIVE_URL = os.getenv("HIVE_URL", "")
 HIVE_API_KEY = os.getenv("HIVE_API_KEY", "")
+INSTANCE_ID = os.getenv("INSTANCE_ID", "")
+
+# Track recent activity in-memory
+_activity: list[dict] = []
+_start_time = datetime.utcnow()
 
 
-class HealthResponse(BaseModel):
-    status: str
-    token: str
-    agent_id: str
-    skills: List[str]
+def _log_activity(kind: str, summary: str, detail: Any = None):
+    _activity.insert(0, {
+        "kind": kind,
+        "summary": summary,
+        "detail": detail,
+        "ts": datetime.utcnow().isoformat(),
+    })
+    if len(_activity) > 50:
+        _activity.pop()
+
+
+# ── Dashboard HTML ─────────────────────────────────────────────────────────────
+
+DASHBOARD_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{agent_name} — Agent Dashboard</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  body {{ font-family: 'Inter', sans-serif; }}
+  .pulse-dot {{ animation: pulse 2s cubic-bezier(0.4,0,0.6,1) infinite; }}
+  @keyframes pulse {{ 0%,100%{{opacity:1}} 50%{{opacity:.5}} }}
+  .chat-bubble-user {{ background: #4f46e5; color: white; border-radius: 18px 18px 4px 18px; }}
+  .chat-bubble-agent {{ background: #f3f4f6; color: #1f2937; border-radius: 18px 18px 18px 4px; }}
+  .scroll-smooth {{ scroll-behavior: smooth; }}
+</style>
+</head>
+<body class="bg-gray-50 min-h-screen" x-data="agentDash()">
+
+<!-- Header -->
+<header class="bg-white border-b sticky top-0 z-10">
+  <div class="max-w-5xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
+    <div class="flex items-center space-x-3">
+      <div class="w-8 h-8 bg-purple-600 rounded-lg flex items-center justify-center">
+        <span class="text-white text-sm font-bold">AI</span>
+      </div>
+      <div>
+        <span class="font-semibold text-gray-900 text-sm">{agent_name}</span>
+        <span class="text-gray-400 text-xs ml-2">· OpenClaw Agent</span>
+      </div>
+    </div>
+    <div class="flex items-center space-x-3">
+      <div class="flex items-center space-x-1.5">
+        <div :class="online ? 'bg-green-400' : 'bg-gray-300'"
+             class="w-2 h-2 rounded-full pulse-dot"></div>
+        <span class="text-xs text-gray-500" x-text="online ? 'Online' : 'Offline'"></span>
+      </div>
+      <a href="{hive_url}" target="_blank"
+         class="text-xs text-indigo-600 hover:text-indigo-800 font-medium">
+        Hive Marketplace →
+      </a>
+    </div>
+  </div>
+</header>
+
+<div class="max-w-5xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+
+  <!-- Status bar -->
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+    <div class="bg-white rounded-xl border p-4">
+      <div class="text-xs text-gray-500 mb-1">Status</div>
+      <div class="flex items-center space-x-2">
+        <div :class="online ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'"
+             class="text-sm font-medium px-2 py-0.5 rounded-full" x-text="online ? 'Active' : 'Starting'"></div>
+      </div>
+    </div>
+    <div class="bg-white rounded-xl border p-4">
+      <div class="text-xs text-gray-500 mb-1">Uptime</div>
+      <div class="text-sm font-semibold text-gray-900" x-text="uptime"></div>
+    </div>
+    <div class="bg-white rounded-xl border p-4">
+      <div class="text-xs text-gray-500 mb-1">Tasks Handled</div>
+      <div class="text-sm font-semibold text-gray-900" x-text="stats.tasks_handled"></div>
+    </div>
+    <div class="bg-white rounded-xl border p-4">
+      <div class="text-xs text-gray-500 mb-1">Skills</div>
+      <div class="text-sm font-semibold text-gray-900" x-text="stats.skills_count"></div>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+    <!-- Chat panel -->
+    <div class="lg:col-span-2 bg-white rounded-xl border flex flex-col" style="height: 520px">
+      <div class="p-4 border-b flex items-center space-x-2">
+        <div class="w-7 h-7 bg-purple-100 rounded-full flex items-center justify-center text-purple-600 text-xs font-bold">AI</div>
+        <div>
+          <div class="text-sm font-semibold text-gray-900">{agent_name}</div>
+          <div class="text-xs text-gray-400">Send a task or ask a question</div>
+        </div>
+      </div>
+
+      <!-- Messages -->
+      <div class="flex-1 overflow-y-auto p-4 space-y-3 scroll-smooth" id="chat-scroll">
+        <div class="flex items-start space-x-2">
+          <div class="w-6 h-6 bg-purple-100 rounded-full flex items-center justify-center text-purple-600 text-xs font-bold flex-shrink-0 mt-0.5">AI</div>
+          <div class="chat-bubble-agent px-4 py-2.5 text-sm max-w-xs">
+            Hi! I'm {agent_name}. Send me a task and I'll get to work.
+          </div>
+        </div>
+        <template x-for="msg in messages" :key="msg.id">
+          <div :class="msg.role === 'user' ? 'flex justify-end' : 'flex items-start space-x-2'">
+            <template x-if="msg.role === 'agent'">
+              <div class="w-6 h-6 bg-purple-100 rounded-full flex items-center justify-center text-purple-600 text-xs font-bold flex-shrink-0 mt-0.5">AI</div>
+            </template>
+            <div :class="msg.role === 'user' ? 'chat-bubble-user px-4 py-2.5 text-sm max-w-xs ml-2' : 'chat-bubble-agent px-4 py-2.5 text-sm max-w-xs'"
+                 x-text="msg.text"></div>
+          </div>
+        </template>
+        <div x-show="thinking" class="flex items-start space-x-2">
+          <div class="w-6 h-6 bg-purple-100 rounded-full flex items-center justify-center text-purple-600 text-xs font-bold flex-shrink-0 mt-0.5">AI</div>
+          <div class="chat-bubble-agent px-4 py-2.5 text-sm">
+            <span class="inline-flex space-x-1">
+              <span class="animate-bounce" style="animation-delay:0s">·</span>
+              <span class="animate-bounce" style="animation-delay:0.15s">·</span>
+              <span class="animate-bounce" style="animation-delay:0.3s">·</span>
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Input -->
+      <div class="p-3 border-t flex space-x-2">
+        <input type="text" x-model="chatInput"
+               @keyup.enter="sendMessage()"
+               placeholder="Ask your agent something..."
+               class="flex-1 px-4 py-2 text-sm border border-gray-200 rounded-full focus:outline-none focus:ring-2 focus:ring-purple-400">
+        <button @click="sendMessage()" :disabled="thinking || !chatInput.trim()"
+                class="w-9 h-9 bg-purple-600 text-white rounded-full flex items-center justify-center hover:bg-purple-700 disabled:opacity-40 flex-shrink-0">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Sidebar -->
+    <div class="space-y-4">
+
+      <!-- Skills -->
+      <div class="bg-white rounded-xl border p-4">
+        <h3 class="text-sm font-semibold text-gray-700 mb-3">Skills</h3>
+        <div x-show="stats.skills.length === 0" class="text-xs text-gray-400">No skills configured</div>
+        <div class="space-y-2">
+          <template x-for="skill in stats.skills" :key="skill">
+            <div class="flex items-center space-x-2">
+              <div class="w-6 h-6 bg-indigo-50 rounded-md flex items-center justify-center text-xs">⚙️</div>
+              <span class="text-xs text-gray-700" x-text="skill"></span>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <!-- Integrations -->
+      <div class="bg-white rounded-xl border p-4">
+        <h3 class="text-sm font-semibold text-gray-700 mb-3">Integrations</h3>
+        <div class="space-y-2">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center space-x-2">
+              <span class="text-base">✈️</span>
+              <span class="text-xs text-gray-700">Telegram</span>
+            </div>
+            <span :class="stats.telegram ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-400'"
+                  class="text-xs px-2 py-0.5 rounded-full font-medium"
+                  x-text="stats.telegram ? 'Connected' : 'Not set'"></span>
+          </div>
+          <div class="flex items-center justify-between">
+            <div class="flex items-center space-x-2">
+              <span class="text-base">🤖</span>
+              <span class="text-xs text-gray-700">LLM</span>
+            </div>
+            <span :class="stats.llm_provider ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-400'"
+                  class="text-xs px-2 py-0.5 rounded-full font-medium"
+                  x-text="stats.llm_provider || 'Not set'"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Recent Activity -->
+      <div class="bg-white rounded-xl border p-4">
+        <h3 class="text-sm font-semibold text-gray-700 mb-3">Recent Activity</h3>
+        <div x-show="activity.length === 0" class="text-xs text-gray-400">No activity yet</div>
+        <div class="space-y-2">
+          <template x-for="item in activity.slice(0, 5)" :key="item.ts">
+            <div class="flex items-start space-x-2">
+              <div :class="item.kind === 'error' ? 'bg-red-100 text-red-500' : item.kind === 'delegation' ? 'bg-purple-100 text-purple-600' : 'bg-gray-100 text-gray-500'"
+                   class="w-5 h-5 rounded flex items-center justify-center text-xs flex-shrink-0 mt-0.5">
+                <span x-text="item.kind === 'delegation' ? '→' : item.kind === 'error' ? '!' : '·'"></span>
+              </div>
+              <div>
+                <div class="text-xs text-gray-700" x-text="item.summary"></div>
+                <div class="text-xs text-gray-400" x-text="timeAgo(item.ts)"></div>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <!-- API Info -->
+      <div class="bg-white rounded-xl border p-4">
+        <h3 class="text-sm font-semibold text-gray-700 mb-3">API</h3>
+        <div class="space-y-1.5 text-xs">
+          <div>
+            <span class="text-gray-500">Agent ID:</span>
+            <code class="ml-1 bg-gray-100 px-1 rounded text-gray-700" x-text="agentId"></code>
+          </div>
+          <div>
+            <span class="text-gray-500">Invoke:</span>
+            <code class="ml-1 bg-gray-100 px-1 rounded text-gray-700">POST /invoke</code>
+          </div>
+          <div>
+            <span class="text-gray-500">Delegate:</span>
+            <code class="ml-1 bg-gray-100 px-1 rounded text-gray-700">POST /delegate</code>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+function agentDash() {{
+  return {{
+    online: false,
+    uptime: '—',
+    chatInput: '',
+    messages: [],
+    thinking: false,
+    _msgId: 0,
+    stats: {{ tasks_handled: 0, skills_count: 0, skills: [], telegram: false, llm_provider: null }},
+    activity: [],
+    agentId: '{agent_id}',
+
+    async init() {{
+      await this.poll();
+      setInterval(() => this.poll(), 15000);
+      this.updateUptime();
+      setInterval(() => this.updateUptime(), 30000);
+    }},
+
+    async poll() {{
+      try {{
+        const r = await fetch('/status');
+        if (r.ok) {{
+          const d = await r.json();
+          this.online = true;
+          this.stats = d;
+          this.activity = d.activity || [];
+        }}
+      }} catch (_) {{ this.online = false; }}
+    }},
+
+    updateUptime() {{
+      const started = new Date('{start_time}');
+      const diff = Math.floor((Date.now() - started) / 1000);
+      const h = Math.floor(diff / 3600);
+      const m = Math.floor((diff % 3600) / 60);
+      this.uptime = h > 0 ? `${{h}}h ${{m}}m` : `${{m}}m`;
+    }},
+
+    async sendMessage() {{
+      const text = this.chatInput.trim();
+      if (!text) return;
+      this.chatInput = '';
+      this.messages.push({{ id: ++this._msgId, role: 'user', text }});
+      this.thinking = true;
+      this.$nextTick(() => {{
+        const el = document.getElementById('chat-scroll');
+        if (el) el.scrollTop = el.scrollHeight;
+      }});
+
+      try {{
+        const r = await fetch('/invoke', {{
+          method: 'POST',
+          headers: {{ 'Content-Type': 'application/json' }},
+          body: JSON.stringify({{ task: text, context: {{}} }}),
+        }});
+        const d = await r.json();
+        const reply = d.result?.output || d.result || 'Task processed.';
+        this.messages.push({{ id: ++this._msgId, role: 'agent', text: typeof reply === 'string' ? reply : JSON.stringify(reply) }});
+      }} catch (e) {{
+        this.messages.push({{ id: ++this._msgId, role: 'agent', text: 'Error: could not reach agent.' }});
+      }} finally {{
+        this.thinking = false;
+        this.$nextTick(() => {{
+          const el = document.getElementById('chat-scroll');
+          if (el) el.scrollTop = el.scrollHeight;
+        }});
+      }}
+    }},
+
+    timeAgo(ts) {{
+      const diff = Math.floor((Date.now() - new Date(ts)) / 1000);
+      if (diff < 60) return 'just now';
+      if (diff < 3600) return Math.floor(diff/60) + 'm ago';
+      return Math.floor(diff/3600) + 'h ago';
+    }},
+  }};
+}}
+</script>
+</body>
+</html>"""
+
+
+@app.get("/", response_class=HTMLResponse)
+async def dashboard():
+    """Serve the agent web dashboard."""
+    llm_provider = None
+    for env_key, label in [("ANTHROPIC_API_KEY", "Claude"), ("OPENAI_API_KEY", "OpenAI"),
+                            ("OPENROUTER_API_KEY", "OpenRouter"), ("GOOGLE_API_KEY", "Google")]:
+        if os.getenv(env_key):
+            llm_provider = label
+            break
+
+    html = DASHBOARD_HTML.format(
+        agent_name=AGENT_NAME,
+        agent_id=AGENT_ID,
+        hive_url=HIVE_URL or "https://hive.rajeev.me",
+        start_time=_start_time.isoformat(),
+    )
+    return HTMLResponse(content=html)
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard_redirect():
+    return await dashboard()
+
+
+@app.get("/status")
+async def status():
+    """Live status for the dashboard polling."""
+    llm_provider = None
+    for env_key, label in [("ANTHROPIC_API_KEY", "Claude"), ("OPENAI_API_KEY", "OpenAI"),
+                            ("OPENROUTER_API_KEY", "OpenRouter"), ("GOOGLE_API_KEY", "Google")]:
+        if os.getenv(env_key):
+            llm_provider = label
+            break
+
+    return {
+        "agent_id": AGENT_ID,
+        "agent_name": AGENT_NAME,
+        "status": "running",
+        "skills": SKILLS,
+        "skills_count": len(SKILLS),
+        "tasks_handled": sum(1 for a in _activity if a["kind"] == "delegation"),
+        "telegram": bool(os.getenv("TELEGRAM_BOT_TOKEN")),
+        "llm_provider": llm_provider,
+        "uptime_seconds": int((datetime.utcnow() - _start_time).total_seconds()),
+        "activity": _activity[:20],
+    }
 
 
 @app.get("/health")
-async def health_check(token: str):
+async def health_check(token: str = ""):
     """Health check endpoint for marketplace verification."""
-    return HealthResponse(
-        status="healthy",
-        token=token,
-        agent_id=AGENT_ID,
-        skills=SKILLS
-    )
+    return {"status": "healthy", "token": token, "agent_id": AGENT_ID, "skills": SKILLS}
 
 
-@app.get("/")
+@app.get("/info")
 async def root():
-    """Root endpoint."""
-    return {
-        "agent_id": AGENT_ID,
-        "name": AGENT_NAME,
-        "skills": SKILLS,
-        "status": "running"
-    }
+    """Agent info (JSON)."""
+    return {"agent_id": AGENT_ID, "name": AGENT_NAME, "skills": SKILLS, "status": "running"}
 
 
 @app.get("/skills")
 async def list_skills():
-    """List available skills."""
     return {"skills": SKILLS}
 
 
 @app.post("/invoke")
 async def invoke(request: Dict):
-    """Invoke the agent with a task."""
+    task = request.get("task", request.get("input", ""))
+    _log_activity("invoke", f"Task: {str(task)[:80]}")
     return {
         "status": "success",
         "agent_id": AGENT_ID,
-        "result": "Task processed"
+        "result": {"output": f"[{AGENT_NAME}] Received: {task}. (Connect an LLM in Hive → Configure to enable real responses.)"},
     }
 
 
 @app.post("/delegate")
 async def delegate(request: Dict):
-    """
-    Hive delegation endpoint — accepts a task from the Hive marketplace.
-
-    In production OpenClaw would run LLM inference here and call the
-    callback_url when done.  This stub accepts immediately so delegation
-    e2e flow works out of the box.
-    """
+    """Hive delegation endpoint."""
     delegation_id = request.get("delegation_id", "unknown")
     task = request.get("task", "")
     callback_url = request.get("callback_url")
+
+    _log_activity("delegation", f"Task: {str(task)[:80]}", {"delegation_id": delegation_id})
 
     result = {
         "status": "completed",
@@ -79,12 +423,11 @@ async def delegate(request: Dict):
         "delegation_id": delegation_id,
         "tokens_used": 1.0,
         "result": {
-            "output": f"Agent {AGENT_NAME} processed task: {task[:200]}",
+            "output": f"[{AGENT_NAME}] Task received: {task[:200]}. Connect an LLM via Hive to enable real task execution.",
             "agent_id": AGENT_ID,
         },
     }
 
-    # Fire-and-forget callback to Hive if provided
     if callback_url:
         asyncio.create_task(_send_callback(callback_url, delegation_id, result))
 
@@ -94,49 +437,35 @@ async def delegate(request: Dict):
 async def _send_callback(callback_url: str, delegation_id: str, result: dict):
     try:
         async with httpx.AsyncClient() as client:
-            await client.post(
-                callback_url,
-                json={
-                    "delegation_id": delegation_id,
-                    "status": "completed",
-                    "result": result.get("result", {}),
-                    "tokens_used": result.get("tokens_used", 1.0),
-                },
-                timeout=15.0,
-            )
+            await client.post(callback_url, json={
+                "delegation_id": delegation_id,
+                "status": "completed",
+                "result": result.get("result", {}),
+                "tokens_used": result.get("tokens_used", 1.0),
+            }, timeout=15.0)
     except Exception as e:
-        print(f"Callback to {callback_url} failed: {e}")
+        _log_activity("error", f"Callback failed: {e}")
 
 
-async def send_heartbeat():
-    """Send heartbeat to Hive."""
+async def _send_heartbeat():
     if not HIVE_URL or not HIVE_API_KEY:
         return
-    
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{HIVE_URL}/api/agent/heartbeat",
-                headers={"X-API-Key": HIVE_API_KEY},
-                timeout=10.0
-            )
-            if response.status_code == 200:
-                print(f"Heartbeat sent to Hive: {AGENT_NAME}")
-            else:
-                print(f"Heartbeat failed: {response.status_code}")
+            await client.post(f"{HIVE_URL}/api/agent/heartbeat",
+                              headers={"X-API-Key": HIVE_API_KEY}, timeout=10.0)
     except Exception as e:
-        print(f"Heartbeat error: {e}")
+        _log_activity("error", f"Heartbeat failed: {e}")
 
 
 @app.on_event("startup")
 async def startup_event():
-    """Start heartbeat loop."""
+    _log_activity("start", f"Agent {AGENT_NAME} started")
     if HIVE_URL and HIVE_API_KEY:
-        asyncio.create_task(heartbeat_loop())
+        asyncio.create_task(_heartbeat_loop())
 
 
-async def heartbeat_loop():
-    """Send heartbeat every 60 seconds."""
+async def _heartbeat_loop():
     while True:
-        await send_heartbeat()
+        await _send_heartbeat()
         await asyncio.sleep(60)

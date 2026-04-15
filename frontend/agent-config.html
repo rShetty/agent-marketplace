@@ -44,19 +44,52 @@
     <div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8" x-show="!loading">
 
         <!-- Header -->
-        <div class="mb-8 flex items-start justify-between">
-            <div>
-                <h1 class="text-2xl font-bold text-gray-900" x-text="agentName"></h1>
-                <div class="flex items-center space-x-3 mt-1">
-                    <span class="text-sm text-gray-500" x-text="agentType === 'openclaw' ? 'OpenClaw Agent' : 'External Agent'"></span>
-                    <span :class="statusDot(agentStatus)" class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium" x-text="agentStatus"></span>
-                    <a x-show="endpointUrl" :href="endpointUrl" target="_blank"
-                       class="text-xs text-indigo-600 hover:text-indigo-800 font-mono" x-text="endpointUrl"></a>
+        <div class="mb-8">
+            <div class="flex items-start justify-between">
+                <div>
+                    <h1 class="text-2xl font-bold text-gray-900" x-text="agentName"></h1>
+                    <div class="flex items-center space-x-3 mt-1">
+                        <span class="text-sm text-gray-500" x-text="agentType === 'openclaw' ? 'OpenClaw Agent' : 'External Agent'"></span>
+                        <span :class="statusDot(agentStatus)" class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium" x-text="agentStatus"></span>
+                    </div>
+                </div>
+            <div class="flex items-center space-x-3">
+                <div x-show="saveSuccess" class="flex items-center space-x-2 bg-green-50 text-green-700 px-4 py-2 rounded-lg text-sm font-medium">
+                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
+                    <span>Saved &amp; applied</span>
+                </div>
+                <a x-show="dashboardUrl" :href="dashboardUrl" target="_blank"
+                   class="inline-flex items-center space-x-2 bg-purple-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-purple-700">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
+                    </svg>
+                    <span>Open Dashboard</span>
+                </a>
+            </div>
+        </div>
+
+        <!-- Dashboard URL banner -->
+        <div x-show="dashboardUrl"
+             class="mb-6 bg-gradient-to-r from-purple-50 to-indigo-50 border border-purple-100 rounded-xl p-4 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+                <div class="w-9 h-9 bg-purple-100 rounded-lg flex items-center justify-center">
+                    <span class="text-purple-600 text-lg">🌐</span>
+                </div>
+                <div>
+                    <div class="text-sm font-semibold text-gray-800">Agent Dashboard</div>
+                    <div class="text-xs text-gray-500 mt-0.5">Requires Hive login · Share this URL with your users</div>
                 </div>
             </div>
-            <div x-show="saveSuccess" class="flex items-center space-x-2 bg-green-50 text-green-700 px-4 py-2 rounded-lg text-sm font-medium">
-                <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
-                <span>Saved &amp; applied</span>
+            <div class="flex items-center space-x-2">
+                <code class="text-xs bg-white border border-purple-100 px-3 py-1.5 rounded-lg text-purple-700 font-mono" x-text="dashboardUrl"></code>
+                <button @click="navigator.clipboard.writeText(dashboardUrl)"
+                        class="text-xs bg-white border border-gray-200 px-2.5 py-1.5 rounded-lg text-gray-600 hover:bg-gray-50">
+                    Copy
+                </button>
+                <a :href="dashboardUrl" target="_blank"
+                   class="text-xs bg-purple-600 text-white px-3 py-1.5 rounded-lg hover:bg-purple-700 font-medium">
+                    Open →
+                </a>
             </div>
         </div>
 
@@ -553,6 +586,9 @@
             saving: false,
             saveSuccess: false,
 
+            dashboardUrl: '',
+            agentSlug: '',
+
             // LLM
             llmProviders: [],
             llmKeys: { anthropic: '', openai: '', openrouter: '', google: '' },
@@ -606,6 +642,8 @@
                     this.agentType = data.agent_type;
                     this.agentStatus = data.status;
                     this.endpointUrl = data.endpoint_url || '';
+                    this.dashboardUrl = data.dashboard_url || '';
+                    this.agentSlug = data.slug || '';
                     this.llmProviders = data.llm_providers_configured || [];
                     this.integrations = data.integrations || {};
                     this.agentSkills = data.skills || [];

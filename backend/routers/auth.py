@@ -89,6 +89,19 @@ async def login(request: Request, response: Response, login_data: LoginRequest, 
         path="/api/auth",  # cookie only sent to auth endpoints
     )
 
+    # Non-httpOnly session cookie used by the agent dashboard proxy (/a/{slug}/).
+    # It carries the same access token that lives in localStorage — no additional
+    # secret is exposed. Path is "/" so the proxy middleware can read it.
+    response.set_cookie(
+        key="hive_token",
+        value=access_token,
+        httponly=False,
+        secure=COOKIE_SECURE,
+        samesite="lax",
+        max_age=REFRESH_TOKEN_EXPIRE_DAYS * 86400,  # long-lived; proxy refreshes token when needed
+        path="/",
+    )
+
     return {"access_token": access_token, "token_type": "bearer"}
 
 
@@ -124,6 +137,15 @@ async def refresh_access_token(
         samesite="lax",
         max_age=REFRESH_TOKEN_EXPIRE_DAYS * 86400,
         path="/api/auth",
+    )
+    response.set_cookie(
+        key="hive_token",
+        value=new_access_token,
+        httponly=False,
+        secure=COOKIE_SECURE,
+        samesite="lax",
+        max_age=REFRESH_TOKEN_EXPIRE_DAYS * 86400,
+        path="/",
     )
 
     return {"access_token": new_access_token, "token_type": "bearer"}

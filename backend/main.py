@@ -71,6 +71,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# ── Security headers middleware ───────────────────────────────────────────────
+from starlette.middleware.base import BaseHTTPMiddleware
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "SAMEORIGIN"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+        # Don't set HSTS here — nginx handles it for HTTPS
+        return response
+
+app.add_middleware(SecurityHeadersMiddleware)
+
 # Include routers
 app.include_router(auth.router)
 app.include_router(agents.router)
@@ -253,6 +270,210 @@ async def delegate_page():
 @app.get("/agent-config")
 async def agent_config_page():
     return _serve_frontend("agent-config.html")
+
+
+# ── Agent dashboard proxy ─────────────────────────────────────────────────────
+# Serves each OpenClaw agent's built-in dashboard at /a/{slug}/
+# Protected by Hive JWT (read from hive_token cookie set at login).
+
+_LOGIN_PAGE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sign in — Hive</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>body{{font-family:'Inter',sans-serif}}</style>
+</head>
+<body class="bg-gray-50 min-h-screen flex items-center justify-center" x-data="loginApp()">
+<div class="bg-white rounded-2xl shadow-lg p-8 w-full max-w-sm">
+  <div class="text-center mb-6">
+    <div class="w-12 h-12 bg-indigo-600 rounded-xl flex items-center justify-center mx-auto mb-3">
+      <span class="text-white font-bold text-xl">H</span>
+    </div>
+    <h1 class="text-xl font-bold text-gray-900">Sign in to Hive</h1>
+    <p class="text-sm text-gray-500 mt-1">To access this agent dashboard</p>
+  </div>
+  <div class="space-y-4">
+    <input type="email" x-model="email" placeholder="Email" @keyup.enter="login()"
+           class="w-full px-4 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400">
+    <input type="password" x-model="password" placeholder="Password" @keyup.enter="login()"
+           class="w-full px-4 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400">
+    <div x-show="error" class="text-red-600 text-sm" x-text="error"></div>
+    <button @click="login()" :disabled="loading"
+            class="w-full py-2.5 bg-indigo-600 text-white rounded-lg font-medium text-sm hover:bg-indigo-700 disabled:opacity-50">
+      <span x-show="!loading">Sign in</span>
+      <span x-show="loading">Signing in...</span>
+    </button>
+  </div>
+</div>
+<script>
+function loginApp() {{
+  return {{
+    email: '', password: '', error: '', loading: false,
+    async login() {{
+      this.loading = true; this.error = '';
+      try {{
+        const r = await fetch('/api/auth/login', {{
+          method: 'POST', credentials: 'include',
+          headers: {{'Content-Type': 'application/json'}},
+          body: JSON.stringify({{email: this.email, password: this.password}}),
+        }});
+        const d = await r.json();
+        if (!r.ok) {{ this.error = d.detail || 'Login failed'; return; }}
+        localStorage.setItem('token', d.access_token);
+        window.location.reload();
+      }} catch(e) {{ this.error = 'Network error'; }}
+      finally {{ this.loading = false; }}
+    }},
+  }};
+}}
+</script>
+</body>
+</html>"""
+
+
+async def _validate_hive_token(request: Request):
+    """Extract and validate JWT from hive_token cookie or Authorization header."""
+    from auth import SECRET_KEY, ALGORITHM, JWT_ISSUER, JWT_AUDIENCE
+    from jose import jwt, JWTError
+    import os as _os
+
+    token = request.cookies.get("hive_token")
+    if not token:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+
+    if not token:
+        return None
+
+    try:
+        payload = jwt.decode(
+            token, SECRET_KEY, algorithms=[ALGORITHM],
+            options={"require": ["exp", "iss", "aud", "sub"]},
+            issuer=JWT_ISSUER, audience=JWT_AUDIENCE,
+        )
+        if payload.get("type") not in (None, "access"):
+            return None
+        return payload.get("sub")
+    except JWTError:
+        return None
+
+
+@app.api_route(
+    "/a/{slug}",
+    methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
+)
+@app.api_route(
+    "/a/{slug}/{path:path}",
+    methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
+)
+async def agent_dashboard_proxy(
+    slug: str,
+    path: str = "",
+    request: Request = None,
+):
+    """
+    Authenticated proxy to an OpenClaw agent's built-in web dashboard.
+    URL: /a/{agent-slug}/  (also exposed via nginx subdomain {slug}.hive.rajeev.me)
+
+    Security:
+    - Requires valid Hive JWT (cookie or Authorization header).
+    - Slug validated as alphanumeric + hyphens only (no path traversal).
+    - Proxy strips sensitive request/response headers.
+    - Agent port bound to 127.0.0.1 — unreachable from public internet directly.
+    """
+    import re
+    from fastapi.responses import HTMLResponse as _HTML
+    from sqlalchemy import select as _sel
+    from database import async_session_maker
+    from models.agent import Agent
+    import aiohttp
+
+    # ── Validate slug — only alphanumeric + hyphens allowed ──────────────────
+    if not re.fullmatch(r"[a-z0-9][a-z0-9\-]{0,119}", slug):
+        raise HTTPException(status_code=400, detail="Invalid agent slug")
+
+    # ── Auth gate ─────────────────────────────────────────────────────────────
+    user_id = await _validate_hive_token(request)
+    if not user_id:
+        return _HTML(content=_LOGIN_PAGE.format(), status_code=200)
+
+    # ── Resolve agent by slug ─────────────────────────────────────────────────
+    async with async_session_maker() as _db:
+        result = await _db.execute(
+            _sel(Agent).where(Agent.slug == slug)
+        )
+        agent = result.scalar_one_or_none()
+
+    if not agent:
+        raise HTTPException(status_code=404, detail=f"No agent with slug '{slug}'")
+
+    if not agent.internal_port:
+        raise HTTPException(status_code=503, detail="Agent has no port assigned")
+
+    # ── Build safe target URL (localhost only — never external) ───────────────
+    # Strip leading slashes from path to prevent path traversal tricks
+    safe_path = path.lstrip("/")
+    target_url = f"http://127.0.0.1:{agent.internal_port}/{safe_path}"
+    if request.query_params:
+        target_url += f"?{request.query_params}"
+
+    # ── Strip unsafe headers from the incoming request ────────────────────────
+    _BLOCKED_REQ_HEADERS = {
+        "host", "transfer-encoding", "connection",
+        "x-hive-user-id",       # Prevent client spoofing these
+        "x-hive-agent-slug",
+        "x-forwarded-for",
+        "authorization",        # Don't forward Hive JWT to agent
+        "cookie",               # Don't forward Hive cookies to agent
+    }
+    forward_headers = {
+        k: v for k, v in request.headers.items()
+        if k.lower() not in _BLOCKED_REQ_HEADERS
+    }
+    forward_headers["X-Hive-User-Id"] = user_id
+    forward_headers["X-Hive-Agent-Slug"] = slug
+    if request.client:
+        forward_headers["X-Forwarded-For"] = request.client.host
+
+    _BLOCKED_RESP_HEADERS = {
+        "transfer-encoding", "content-encoding", "content-length",
+        "connection", "server",
+        "x-powered-by",         # Avoid leaking agent stack info
+    }
+
+    method = request.method
+    try:
+        body = await request.body() if method in ("POST", "PUT", "PATCH") else None
+        async with aiohttp.ClientSession() as _sess:
+            async with _sess.request(
+                method=method,
+                url=target_url,
+                headers=forward_headers,
+                data=body,
+                timeout=aiohttp.ClientTimeout(total=30),
+                allow_redirects=False,
+            ) as resp:
+                content = await resp.read()
+                from fastapi.responses import Response as _Resp
+                safe_resp_headers = {
+                    k: v for k, v in resp.headers.items()
+                    if k.lower() not in _BLOCKED_RESP_HEADERS
+                }
+                return _Resp(
+                    content=content,
+                    status_code=resp.status,
+                    headers=safe_resp_headers,
+                    media_type=resp.headers.get("content-type", "text/html"),
+                )
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error("Dashboard proxy error for %s: %s", slug, e)
+        raise HTTPException(status_code=502, detail="Agent unreachable")
 
 
 @app.get("/agents/{agent_id}/health")
