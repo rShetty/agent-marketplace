@@ -76,24 +76,29 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 log_info "Deploying to ${REMOTE_SERVER}:${REMOTE_PORT} (branch: ${GIT_BRANCH})"
 log_info "OpenClaw VPS host: ${OC_HOST} | SSH key: ${OC_SSH_KEY}"
 
+# Load persisted keys from server's .env if not already set locally
+if [ -z "$ENCRYPTION_KEY" ] || [ -z "$SECRET_KEY" ]; then
+    log_info "Checking server for persisted keys at /opt/${APP_NAME}/.env ..."
+    SERVER_ENV=$(ssh "$REMOTE_HOST" "cat /opt/${APP_NAME}/.env 2>/dev/null || true")
+    if echo "$SERVER_ENV" | grep -q "ENCRYPTION_KEY="; then
+        eval "$(echo "$SERVER_ENV" | grep -E '^(ENCRYPTION_KEY|SECRET_KEY)=')"
+        log_info "Loaded keys from server .env"
+    fi
+fi
+
 # Check if required environment variables are set
+KEYS_GENERATED=false
 if [ -z "$ENCRYPTION_KEY" ]; then
     log_warn "ENCRYPTION_KEY not set. Generating a random one..."
     export ENCRYPTION_KEY=$(openssl rand -hex 32)
+    KEYS_GENERATED=true
     log_warn "⚠️  IMPORTANT: Save the generated keys! They will be displayed at the end."
 fi
 
 if [ -z "$SECRET_KEY" ]; then
     log_warn "SECRET_KEY not set. Generating a random one..."
     export SECRET_KEY=$(openssl rand -hex 32)
-fi
-
-# Store if keys were generated (for display at end)
-KEYS_GENERATED=false
-if [ -z "${ENCRYPTION_KEY_PROVIDED}" ] || [ -z "${SECRET_KEY_PROVIDED}" ]; then
     KEYS_GENERATED=true
-    ENCRYPTION_KEY_PROVIDED=${ENCRYPTION_KEY}
-    SECRET_KEY_PROVIDED=${SECRET_KEY}
 fi
 
 # Step 1: Check SSH connection
@@ -277,16 +282,20 @@ else
     log_info "Check logs with: ssh $REMOTE_HOST 'cd /opt/${APP_NAME} && docker-compose -f docker-compose.prod.yml logs -f'"
 fi
 
-# Display generated keys if any
+# Persist keys to server .env if they were generated this run
 if [ "$KEYS_GENERATED" = true ]; then
+    log_info "Saving generated keys to /opt/${APP_NAME}/.env on server..."
+    ssh "$REMOTE_HOST" "cat > /opt/${APP_NAME}/.env << 'ENVEOF'
+ENCRYPTION_KEY=${ENCRYPTION_KEY}
+SECRET_KEY=${SECRET_KEY}
+ENVEOF"
     log_info ""
-    log_warn "⚠️  IMPORTANT: Save these generated keys securely!"
-    log_warn "They are required for future deployments and data encryption."
+    log_warn "⚠️  IMPORTANT: New keys were generated and saved to /opt/${APP_NAME}/.env on the server."
+    log_warn "All previously encrypted data is unreadable with the new key."
     echo ""
-    echo "export ENCRYPTION_KEY='${ENCRYPTION_KEY_PROVIDED}'"
-    echo "export SECRET_KEY='${SECRET_KEY_PROVIDED}'"
+    echo "export ENCRYPTION_KEY='${ENCRYPTION_KEY}'"
+    echo "export SECRET_KEY='${SECRET_KEY}'"
     echo ""
-    log_warn "Add these to your .bashrc, .zshrc, or use a secure secrets manager."
 fi
 
 log_info ""
