@@ -48,6 +48,14 @@ class Agent(Base):
     
     # Agent type: managed | external | openclaw
     agent_type = Column(String(20), default=AgentType.MANAGED.value)
+
+    # Per-agent encrypted configuration (LLM keys, integration tokens, etc.)
+    # Encrypted with the same Fernet key as user-level model_api_keys_encrypted.
+    config_encrypted = Column(Text, nullable=True)
+
+    # OpenClaw instance tracking — the UUID used when deploying to VPS.
+    # Allows us to locate /opt/hive/openclaw-{instance_id[:8]} for reconfig.
+    openclaw_instance_id = Column(String(36), nullable=True)
     
     # Owner (required - every agent must have a human owner)
     owner_id = Column(String(36), ForeignKey("users.id"), nullable=False)

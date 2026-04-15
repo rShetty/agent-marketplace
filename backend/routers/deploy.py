@@ -428,6 +428,12 @@ async def deploy_openclaw_agent(
     if result["success"]:
         agent.status = AgentStatus.ACTIVE.value
         agent.endpoint_url = result.get("url", "")
+        agent.openclaw_instance_id = instance_id
+        # Persist the raw API key encrypted so config updates can restart with it
+        import json as _json
+        agent.config_encrypted = fernet.encrypt(
+            _json.dumps({"_hive_api_key": api_key}).encode()
+        ).decode()
         await db.commit()
         
         registration_prompt = f"""You are {req.agent_name}, an OpenClaw agent registered with Hive.

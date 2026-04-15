@@ -1,0 +1,828 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agent Configuration - Hive</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .tab-active { border-bottom: 2px solid #4f46e5; color: #4f46e5; font-weight: 600; }
+        .tab-inactive { border-bottom: 2px solid transparent; color: #6b7280; }
+        .provider-card { transition: all 0.15s ease; }
+        .provider-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        .integration-card { transition: all 0.15s ease; }
+        .step-badge { width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen" x-data="configApp()">
+
+    <!-- Navigation -->
+    <nav class="bg-white shadow-sm border-b sticky top-0 z-10">
+        <div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-14">
+                <div class="flex items-center space-x-4">
+                    <a href="/" class="flex items-center space-x-2">
+                        <div class="w-7 h-7 bg-indigo-600 rounded-lg flex items-center justify-center">
+                            <span class="text-white font-bold text-sm">A</span>
+                        </div>
+                        <span class="text-lg font-semibold text-gray-900">Hive</span>
+                    </a>
+                    <span class="text-gray-300">/</span>
+                    <span class="text-gray-600 text-sm" x-text="agentName || 'Agent Config'"></span>
+                </div>
+                <div class="flex items-center space-x-3">
+                    <a :href="`/agent-detail?id=${agentId}`" class="text-sm text-gray-500 hover:text-gray-800">&larr; Agent Details</a>
+                    <button @click="logout()" class="text-sm text-gray-500 hover:text-gray-800">Logout</button>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8" x-show="!loading">
+
+        <!-- Header -->
+        <div class="mb-8 flex items-start justify-between">
+            <div>
+                <h1 class="text-2xl font-bold text-gray-900" x-text="agentName"></h1>
+                <div class="flex items-center space-x-3 mt-1">
+                    <span class="text-sm text-gray-500" x-text="agentType === 'openclaw' ? 'OpenClaw Agent' : 'External Agent'"></span>
+                    <span :class="statusDot(agentStatus)" class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium" x-text="agentStatus"></span>
+                    <a x-show="endpointUrl" :href="endpointUrl" target="_blank"
+                       class="text-xs text-indigo-600 hover:text-indigo-800 font-mono" x-text="endpointUrl"></a>
+                </div>
+            </div>
+            <div x-show="saveSuccess" class="flex items-center space-x-2 bg-green-50 text-green-700 px-4 py-2 rounded-lg text-sm font-medium">
+                <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
+                <span>Saved &amp; applied</span>
+            </div>
+        </div>
+
+        <!-- Tabs -->
+        <div class="border-b border-gray-200 mb-8">
+            <nav class="flex space-x-6">
+                <button @click="tab = 'llm'"
+                    :class="tab === 'llm' ? 'tab-active' : 'tab-inactive'"
+                    class="pb-3 text-sm px-1 whitespace-nowrap">
+                    LLM Keys
+                </button>
+                <button @click="tab = 'integrations'"
+                    :class="tab === 'integrations' ? 'tab-active' : 'tab-inactive'"
+                    class="pb-3 text-sm px-1 whitespace-nowrap">
+                    Messaging Integrations
+                </button>
+                <button @click="tab = 'skills'"
+                    :class="tab === 'skills' ? 'tab-active' : 'tab-inactive'"
+                    class="pb-3 text-sm px-1 whitespace-nowrap">
+                    Skills
+                </button>
+            </nav>
+        </div>
+
+        <!-- ═══════════════════════════ LLM KEYS TAB ═══════════════════════════ -->
+        <div x-show="tab === 'llm'">
+            <p class="text-sm text-gray-600 mb-6">
+                Configure which AI provider powers this agent. The API key is encrypted and injected
+                into your agent's container as an environment variable.
+            </p>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+                <!-- Anthropic -->
+                <div class="provider-card bg-white rounded-xl border p-5 cursor-pointer"
+                     @click="expandedProvider = expandedProvider === 'anthropic' ? null : 'anthropic'">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center space-x-3">
+                            <div class="w-10 h-10 bg-amber-50 rounded-lg flex items-center justify-center text-xl">🤖</div>
+                            <div>
+                                <div class="font-semibold text-gray-900 text-sm">Anthropic (Claude)</div>
+                                <div class="text-xs text-gray-500">claude-3-5-sonnet, claude-opus-4</div>
+                            </div>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <span x-show="llmProviders.includes('anthropic')"
+                                  class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">
+                                Configured
+                            </span>
+                            <svg :class="expandedProvider === 'anthropic' ? 'rotate-180' : ''"
+                                 class="w-4 h-4 text-gray-400 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                            </svg>
+                        </div>
+                    </div>
+                    <div x-show="expandedProvider === 'anthropic'" @click.stop class="mt-4 space-y-3">
+                        <div>
+                            <label class="block text-xs font-medium text-gray-600 mb-1">API Key</label>
+                            <div class="flex space-x-2">
+                                <input type="password" x-model="llmKeys.anthropic"
+                                       placeholder="sk-ant-..."
+                                       class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400">
+                                <button @click="saveLLMKey('anthropic')"
+                                        :disabled="saving"
+                                        class="px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 disabled:opacity-50">
+                                    Save
+                                </button>
+                            </div>
+                            <p class="text-xs text-gray-400 mt-1">Env var: <code class="bg-gray-100 px-1 rounded">ANTHROPIC_API_KEY</code></p>
+                        </div>
+                        <div x-show="llmProviders.includes('anthropic')" class="flex justify-end">
+                            <button @click="removeLLMKey('anthropic')" class="text-xs text-red-500 hover:text-red-700">
+                                Remove key
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- OpenAI -->
+                <div class="provider-card bg-white rounded-xl border p-5 cursor-pointer"
+                     @click="expandedProvider = expandedProvider === 'openai' ? null : 'openai'">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center space-x-3">
+                            <div class="w-10 h-10 bg-emerald-50 rounded-lg flex items-center justify-center text-xl">🟢</div>
+                            <div>
+                                <div class="font-semibold text-gray-900 text-sm">OpenAI</div>
+                                <div class="text-xs text-gray-500">gpt-4o, gpt-4-turbo, o3</div>
+                            </div>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <span x-show="llmProviders.includes('openai')"
+                                  class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">
+                                Configured
+                            </span>
+                            <svg :class="expandedProvider === 'openai' ? 'rotate-180' : ''"
+                                 class="w-4 h-4 text-gray-400 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                            </svg>
+                        </div>
+                    </div>
+                    <div x-show="expandedProvider === 'openai'" @click.stop class="mt-4 space-y-3">
+                        <div>
+                            <label class="block text-xs font-medium text-gray-600 mb-1">API Key</label>
+                            <div class="flex space-x-2">
+                                <input type="password" x-model="llmKeys.openai"
+                                       placeholder="sk-..."
+                                       class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400">
+                                <button @click="saveLLMKey('openai')"
+                                        :disabled="saving"
+                                        class="px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 disabled:opacity-50">
+                                    Save
+                                </button>
+                            </div>
+                            <p class="text-xs text-gray-400 mt-1">Env var: <code class="bg-gray-100 px-1 rounded">OPENAI_API_KEY</code></p>
+                        </div>
+                        <div x-show="llmProviders.includes('openai')" class="flex justify-end">
+                            <button @click="removeLLMKey('openai')" class="text-xs text-red-500 hover:text-red-700">Remove key</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- OpenRouter -->
+                <div class="provider-card bg-white rounded-xl border p-5 cursor-pointer"
+                     @click="expandedProvider = expandedProvider === 'openrouter' ? null : 'openrouter'">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center space-x-3">
+                            <div class="w-10 h-10 bg-blue-50 rounded-lg flex items-center justify-center text-xl">🔀</div>
+                            <div>
+                                <div class="font-semibold text-gray-900 text-sm">OpenRouter</div>
+                                <div class="text-xs text-gray-500">Route to any model via one key</div>
+                            </div>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <span x-show="llmProviders.includes('openrouter')"
+                                  class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">
+                                Configured
+                            </span>
+                            <svg :class="expandedProvider === 'openrouter' ? 'rotate-180' : ''"
+                                 class="w-4 h-4 text-gray-400 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                            </svg>
+                        </div>
+                    </div>
+                    <div x-show="expandedProvider === 'openrouter'" @click.stop class="mt-4">
+                        <div>
+                            <label class="block text-xs font-medium text-gray-600 mb-1">API Key</label>
+                            <div class="flex space-x-2">
+                                <input type="password" x-model="llmKeys.openrouter"
+                                       placeholder="sk-or-..."
+                                       class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400">
+                                <button @click="saveLLMKey('openrouter')"
+                                        :disabled="saving"
+                                        class="px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 disabled:opacity-50">
+                                    Save
+                                </button>
+                            </div>
+                            <p class="text-xs text-gray-400 mt-1">Env var: <code class="bg-gray-100 px-1 rounded">OPENROUTER_API_KEY</code></p>
+                        </div>
+                        <div x-show="llmProviders.includes('openrouter')" class="flex justify-end mt-2">
+                            <button @click="removeLLMKey('openrouter')" class="text-xs text-red-500 hover:text-red-700">Remove key</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Google -->
+                <div class="provider-card bg-white rounded-xl border p-5 cursor-pointer"
+                     @click="expandedProvider = expandedProvider === 'google' ? null : 'google'">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center space-x-3">
+                            <div class="w-10 h-10 bg-red-50 rounded-lg flex items-center justify-center text-xl">✨</div>
+                            <div>
+                                <div class="font-semibold text-gray-900 text-sm">Google AI</div>
+                                <div class="text-xs text-gray-500">Gemini 2.0, Gemini Flash</div>
+                            </div>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <span x-show="llmProviders.includes('google')"
+                                  class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">
+                                Configured
+                            </span>
+                            <svg :class="expandedProvider === 'google' ? 'rotate-180' : ''"
+                                 class="w-4 h-4 text-gray-400 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                            </svg>
+                        </div>
+                    </div>
+                    <div x-show="expandedProvider === 'google'" @click.stop class="mt-4">
+                        <div>
+                            <label class="block text-xs font-medium text-gray-600 mb-1">API Key</label>
+                            <div class="flex space-x-2">
+                                <input type="password" x-model="llmKeys.google"
+                                       placeholder="AIza..."
+                                       class="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400">
+                                <button @click="saveLLMKey('google')"
+                                        :disabled="saving"
+                                        class="px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 disabled:opacity-50">
+                                    Save
+                                </button>
+                            </div>
+                            <p class="text-xs text-gray-400 mt-1">Env var: <code class="bg-gray-100 px-1 rounded">GOOGLE_API_KEY</code></p>
+                        </div>
+                        <div x-show="llmProviders.includes('google')" class="flex justify-end mt-2">
+                            <button @click="removeLLMKey('google')" class="text-xs text-red-500 hover:text-red-700">Remove key</button>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+
+            <div x-show="llmError" class="mt-4 p-3 bg-red-50 text-red-700 rounded-lg text-sm" x-text="llmError"></div>
+        </div>
+
+        <!-- ═══════════════════════════ INTEGRATIONS TAB ═══════════════════════════ -->
+        <div x-show="tab === 'integrations'" class="space-y-6">
+
+            <p class="text-sm text-gray-600">
+                Connect your agent to messaging platforms so users can interact with it directly.
+                Your agent receives messages and replies through these channels.
+            </p>
+
+            <!-- Telegram -->
+            <div class="bg-white rounded-xl border overflow-hidden">
+                <div class="flex items-center justify-between p-5 cursor-pointer"
+                     @click="expandedIntegration = expandedIntegration === 'telegram' ? null : 'telegram'">
+                    <div class="flex items-center space-x-4">
+                        <div class="w-12 h-12 rounded-xl flex items-center justify-center text-2xl" style="background:#e8f4fd">
+                            ✈️
+                        </div>
+                        <div>
+                            <div class="font-semibold text-gray-900">Telegram</div>
+                            <div class="text-sm text-gray-500">
+                                Users message your bot in Telegram, agent replies in real-time
+                            </div>
+                        </div>
+                    </div>
+                    <div class="flex items-center space-x-3">
+                        <span x-show="integrations.telegram?.configured"
+                              class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">
+                            Connected
+                        </span>
+                        <span x-show="!integrations.telegram?.configured"
+                              class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
+                            Not connected
+                        </span>
+                        <svg :class="expandedIntegration === 'telegram' ? 'rotate-180' : ''"
+                             class="w-5 h-5 text-gray-400 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                        </svg>
+                    </div>
+                </div>
+
+                <div x-show="expandedIntegration === 'telegram'" class="border-t bg-gray-50 p-5">
+                    <!-- Setup steps -->
+                    <div class="mb-5">
+                        <h4 class="text-sm font-semibold text-gray-700 mb-3">How to set up:</h4>
+                        <div class="space-y-3">
+                            <div class="flex items-start space-x-3">
+                                <div class="step-badge bg-indigo-100 text-indigo-700 flex-shrink-0 mt-0.5">1</div>
+                                <div class="text-sm text-gray-600">
+                                    Open Telegram and message <a href="https://t.me/BotFather" target="_blank" class="text-indigo-600 font-medium">@BotFather</a>
+                                </div>
+                            </div>
+                            <div class="flex items-start space-x-3">
+                                <div class="step-badge bg-indigo-100 text-indigo-700 flex-shrink-0 mt-0.5">2</div>
+                                <div class="text-sm text-gray-600">
+                                    Send <code class="bg-white border px-1.5 py-0.5 rounded text-xs">/newbot</code> and follow prompts to create your bot
+                                </div>
+                            </div>
+                            <div class="flex items-start space-x-3">
+                                <div class="step-badge bg-indigo-100 text-indigo-700 flex-shrink-0 mt-0.5">3</div>
+                                <div class="text-sm text-gray-600">
+                                    Copy the API token BotFather gives you and paste it below
+                                </div>
+                            </div>
+                            <div class="flex items-start space-x-3">
+                                <div class="step-badge bg-indigo-100 text-indigo-700 flex-shrink-0 mt-0.5">4</div>
+                                <div class="text-sm text-gray-600">
+                                    Click <strong>Save &amp; Register Webhook</strong> — we'll automatically connect Telegram to your agent
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Token input -->
+                    <div class="bg-white rounded-lg border p-4 space-y-3">
+                        <div>
+                            <label class="block text-xs font-medium text-gray-600 mb-1">Bot Token</label>
+                            <input type="password" x-model="telegram.botToken"
+                                   placeholder="1234567890:ABCdefGHIjklMNOpqrsTUVwxyz"
+                                   class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400 font-mono">
+                        </div>
+                        <div class="flex items-center space-x-3">
+                            <button @click="saveTelegram()"
+                                    :disabled="saving || !telegram.botToken"
+                                    class="px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 disabled:opacity-50 font-medium">
+                                <span x-show="!saving">Save &amp; Register Webhook</span>
+                                <span x-show="saving" class="flex items-center space-x-1">
+                                    <svg class="animate-spin w-3 h-3" fill="none" viewBox="0 0 24 24">
+                                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4z"/>
+                                    </svg>
+                                    <span>Saving...</span>
+                                </span>
+                            </button>
+                            <button x-show="integrations.telegram?.configured"
+                                    @click="verifyTelegram()"
+                                    :disabled="saving"
+                                    class="px-4 py-2 bg-white border text-gray-700 text-sm rounded-lg hover:bg-gray-50 disabled:opacity-50">
+                                Verify Bot
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Bot info after verification -->
+                    <div x-show="telegramBotInfo" class="mt-3 p-3 bg-blue-50 rounded-lg">
+                        <div class="flex items-center space-x-3">
+                            <div class="w-9 h-9 bg-blue-200 rounded-full flex items-center justify-center text-lg">🤖</div>
+                            <div>
+                                <div class="text-sm font-semibold text-blue-900" x-text="telegramBotInfo?.first_name"></div>
+                                <div class="text-xs text-blue-600" x-text="'@' + telegramBotInfo?.username"></div>
+                            </div>
+                            <a :href="'https://t.me/' + telegramBotInfo?.username" target="_blank"
+                               class="ml-auto text-xs text-blue-600 hover:text-blue-800 font-medium">
+                                Open in Telegram &rarr;
+                            </a>
+                        </div>
+                        <div class="mt-2 text-xs text-blue-700">
+                            Webhook: <code x-text="telegramWebhookUrl" class="bg-blue-100 px-1 rounded"></code>
+                        </div>
+                    </div>
+
+                    <div x-show="telegramError" class="mt-3 p-3 bg-red-50 text-red-700 rounded-lg text-sm" x-text="telegramError"></div>
+                </div>
+            </div>
+
+            <!-- Gmail -->
+            <div class="bg-white rounded-xl border overflow-hidden opacity-75">
+                <div class="flex items-center justify-between p-5">
+                    <div class="flex items-center space-x-4">
+                        <div class="w-12 h-12 rounded-xl flex items-center justify-center text-2xl" style="background:#fce8e6">
+                            📧
+                        </div>
+                        <div>
+                            <div class="font-semibold text-gray-900">Gmail</div>
+                            <div class="text-sm text-gray-500">Send and receive emails through your agent</div>
+                        </div>
+                    </div>
+                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-700">
+                        Coming Soon
+                    </span>
+                </div>
+            </div>
+
+            <!-- WhatsApp -->
+            <div class="bg-white rounded-xl border overflow-hidden opacity-75">
+                <div class="flex items-center justify-between p-5">
+                    <div class="flex items-center space-x-4">
+                        <div class="w-12 h-12 rounded-xl flex items-center justify-center text-2xl" style="background:#e8f5e9">
+                            💬
+                        </div>
+                        <div>
+                            <div class="font-semibold text-gray-900">WhatsApp</div>
+                            <div class="text-sm text-gray-500">Chat with your agent via WhatsApp Business</div>
+                        </div>
+                    </div>
+                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-700">
+                        Coming Soon
+                    </span>
+                </div>
+            </div>
+
+            <!-- Discord -->
+            <div class="bg-white rounded-xl border overflow-hidden opacity-75">
+                <div class="flex items-center justify-between p-5">
+                    <div class="flex items-center space-x-4">
+                        <div class="w-12 h-12 rounded-xl flex items-center justify-center text-2xl" style="background:#eef0ff">
+                            🎮
+                        </div>
+                        <div>
+                            <div class="font-semibold text-gray-900">Discord</div>
+                            <div class="text-sm text-gray-500">Deploy a Discord bot powered by your agent</div>
+                        </div>
+                    </div>
+                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-700">
+                        Coming Soon
+                    </span>
+                </div>
+            </div>
+
+            <div x-show="integrationError" class="p-3 bg-red-50 text-red-700 rounded-lg text-sm" x-text="integrationError"></div>
+        </div>
+
+        <!-- ═══════════════════════════ SKILLS TAB ═══════════════════════════ -->
+        <div x-show="tab === 'skills'">
+            <p class="text-sm text-gray-600 mb-6">
+                Skills define what your agent can do. Each skill maps to a capability exposed
+                by the agent runtime and visible to other agents in the marketplace.
+            </p>
+
+            <!-- Current skills -->
+            <div class="mb-8">
+                <h3 class="text-sm font-semibold text-gray-700 mb-3">Active Skills</h3>
+                <div x-show="agentSkills.length === 0" class="text-sm text-gray-500 italic">No skills configured.</div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <template x-for="skill in agentSkills" :key="skill.id">
+                        <div class="bg-white rounded-lg border p-4 flex items-start justify-between">
+                            <div class="flex items-start space-x-3">
+                                <div :class="tierBadge(skill.tier).bg"
+                                     class="w-9 h-9 rounded-lg flex items-center justify-center text-base flex-shrink-0"
+                                     x-text="skillIcon(skill.name)"></div>
+                                <div>
+                                    <div class="text-sm font-semibold text-gray-900" x-text="skill.display_name"></div>
+                                    <div class="text-xs text-gray-500 mt-0.5" x-text="skill.description"></div>
+                                    <span :class="tierBadge(skill.tier).text"
+                                          class="text-xs font-medium mt-1 inline-block" x-text="skill.tier"></span>
+                                </div>
+                            </div>
+                            <button @click="removeSkill(skill.id)"
+                                    :disabled="saving"
+                                    class="text-gray-300 hover:text-red-400 transition-colors ml-2 flex-shrink-0"
+                                    title="Remove skill">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                </svg>
+                            </button>
+                        </div>
+                    </template>
+                </div>
+            </div>
+
+            <!-- Available skills to add -->
+            <div>
+                <h3 class="text-sm font-semibold text-gray-700 mb-3">Add Skills</h3>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <template x-for="skill in availableSkillsToAdd" :key="skill.id">
+                        <div class="bg-white rounded-lg border p-4 flex items-start justify-between hover:border-indigo-300 transition-colors">
+                            <div class="flex items-start space-x-3">
+                                <div :class="tierBadge(skill.tier).bg"
+                                     class="w-9 h-9 rounded-lg flex items-center justify-center text-base flex-shrink-0"
+                                     x-text="skillIcon(skill.name)"></div>
+                                <div>
+                                    <div class="text-sm font-semibold text-gray-900" x-text="skill.display_name"></div>
+                                    <div class="text-xs text-gray-500 mt-0.5" x-text="skill.description"></div>
+                                    <span :class="tierBadge(skill.tier).text"
+                                          class="text-xs font-medium mt-1 inline-block" x-text="skill.tier"></span>
+                                </div>
+                            </div>
+                            <button @click="addSkill(skill.id)"
+                                    :disabled="saving"
+                                    class="px-3 py-1.5 bg-indigo-50 text-indigo-700 text-xs font-medium rounded-lg hover:bg-indigo-100 disabled:opacity-50 flex-shrink-0 ml-2">
+                                + Add
+                            </button>
+                        </div>
+                    </template>
+                </div>
+                <div x-show="availableSkillsToAdd.length === 0" class="text-sm text-gray-500 italic">
+                    All available skills are already attached.
+                </div>
+            </div>
+
+            <div x-show="skillError" class="mt-4 p-3 bg-red-50 text-red-700 rounded-lg text-sm" x-text="skillError"></div>
+        </div>
+
+    </div>
+
+    <!-- Loading -->
+    <div x-show="loading" class="flex items-center justify-center min-h-96">
+        <div class="text-center">
+            <div class="animate-spin w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full mx-auto mb-3"></div>
+            <p class="text-gray-500 text-sm">Loading configuration...</p>
+        </div>
+    </div>
+
+    <!-- Error state -->
+    <div x-show="pageError" class="max-w-5xl mx-auto px-4 py-16 text-center">
+        <div class="text-4xl mb-4">⚠️</div>
+        <h2 class="text-xl font-semibold text-gray-900 mb-2">Access Denied</h2>
+        <p class="text-gray-600 mb-4" x-text="pageError"></p>
+        <a href="/agents" class="text-indigo-600 hover:text-indigo-800">Browse Agents</a>
+    </div>
+
+    <script src="js/app.js"></script>
+    <script>
+    function configApp() {
+        return {
+            agentId: null,
+            agentName: '',
+            agentType: '',
+            agentStatus: '',
+            endpointUrl: '',
+            loading: true,
+            pageError: null,
+            tab: 'llm',
+            saving: false,
+            saveSuccess: false,
+
+            // LLM
+            llmProviders: [],
+            llmKeys: { anthropic: '', openai: '', openrouter: '', google: '' },
+            expandedProvider: null,
+            llmError: '',
+
+            // Integrations
+            integrations: {},
+            expandedIntegration: null,
+            telegram: { botToken: '' },
+            telegramBotInfo: null,
+            telegramWebhookUrl: '',
+            telegramError: '',
+            integrationError: '',
+
+            // Skills
+            agentSkills: [],
+            allSkills: [],
+            skillError: '',
+
+            async init() {
+                const params = new URLSearchParams(window.location.search);
+                this.agentId = params.get('id');
+                if (!this.agentId) {
+                    this.pageError = 'No agent ID specified.';
+                    this.loading = false;
+                    return;
+                }
+
+                const token = localStorage.getItem('token');
+                if (!token) {
+                    window.location.href = '/login';
+                    return;
+                }
+
+                await Promise.all([this.loadConfig(), this.loadAllSkills()]);
+                this.loading = false;
+            },
+
+            async loadConfig() {
+                try {
+                    const res = await apiFetch(`/api/agents/${this.agentId}/config`);
+                    if (res.status === 403 || res.status === 404) {
+                        this.pageError = 'You do not own this agent or it does not exist.';
+                        return;
+                    }
+                    if (!res.ok) { this.pageError = 'Failed to load config.'; return; }
+
+                    const data = await res.json();
+                    this.agentName = data.agent_name;
+                    this.agentType = data.agent_type;
+                    this.agentStatus = data.status;
+                    this.endpointUrl = data.endpoint_url || '';
+                    this.llmProviders = data.llm_providers_configured || [];
+                    this.integrations = data.integrations || {};
+                    this.agentSkills = data.skills || [];
+                } catch (e) {
+                    this.pageError = 'Network error loading config.';
+                }
+            },
+
+            async loadAllSkills() {
+                try {
+                    const res = await apiFetch('/api/skills');
+                    if (res.ok) this.allSkills = await res.json();
+                } catch (_) {}
+            },
+
+            get availableSkillsToAdd() {
+                const attached = new Set(this.agentSkills.map(s => s.id));
+                return this.allSkills.filter(s => !attached.has(s.id));
+            },
+
+            // ── LLM ─────────────────────────────────────────────────────────
+
+            async saveLLMKey(provider) {
+                const key = this.llmKeys[provider];
+                if (!key) return;
+                this.saving = true;
+                this.llmError = '';
+                try {
+                    const res = await apiFetch(`/api/agents/${this.agentId}/config`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ llm: { provider, api_key: key }, restart: true }),
+                    });
+                    if (!res.ok) {
+                        const err = await res.json();
+                        this.llmError = err.detail || 'Save failed';
+                        return;
+                    }
+                    if (!this.llmProviders.includes(provider)) this.llmProviders.push(provider);
+                    this.llmKeys[provider] = '';
+                    this.expandedProvider = null;
+                    this.flashSuccess();
+                } catch (e) {
+                    this.llmError = 'Network error';
+                } finally {
+                    this.saving = false;
+                }
+            },
+
+            async removeLLMKey(provider) {
+                this.saving = true;
+                this.llmError = '';
+                try {
+                    const res = await apiFetch(`/api/agents/${this.agentId}/config/llm/${provider}`, {
+                        method: 'DELETE',
+                    });
+                    if (res.ok) {
+                        this.llmProviders = this.llmProviders.filter(p => p !== provider);
+                        this.expandedProvider = null;
+                        this.flashSuccess();
+                    }
+                } catch (_) {
+                    this.llmError = 'Network error';
+                } finally {
+                    this.saving = false;
+                }
+            },
+
+            // ── Telegram ─────────────────────────────────────────────────────
+
+            async saveTelegram() {
+                if (!this.telegram.botToken) return;
+                this.saving = true;
+                this.telegramError = '';
+                try {
+                    // 1. Save token
+                    const res = await apiFetch(`/api/agents/${this.agentId}/config`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            telegram: { bot_token: this.telegram.botToken },
+                            restart: true,
+                        }),
+                    });
+                    if (!res.ok) {
+                        const err = await res.json();
+                        this.telegramError = err.detail || 'Save failed';
+                        return;
+                    }
+                    this.integrations = { ...this.integrations, telegram: { configured: true } };
+
+                    // 2. Register webhook
+                    const wRes = await apiFetch(`/api/agents/${this.agentId}/integrations/telegram/setup`, {
+                        method: 'POST',
+                    });
+                    if (!wRes.ok) {
+                        const err = await wRes.json();
+                        this.telegramError = 'Saved token but webhook failed: ' + (err.detail || 'unknown');
+                        return;
+                    }
+                    const wData = await wRes.json();
+                    this.telegramWebhookUrl = wData.webhook_url;
+
+                    // 3. Verify bot info
+                    await this.verifyTelegram();
+                    this.telegram.botToken = '';
+                    this.flashSuccess();
+                } catch (e) {
+                    this.telegramError = 'Network error';
+                } finally {
+                    this.saving = false;
+                }
+            },
+
+            async verifyTelegram() {
+                this.telegramError = '';
+                try {
+                    const res = await apiFetch(`/api/agents/${this.agentId}/integrations/telegram/info`);
+                    if (!res.ok) {
+                        const err = await res.json();
+                        this.telegramError = err.detail || 'Verification failed';
+                        return;
+                    }
+                    const data = await res.json();
+                    this.telegramBotInfo = data.bot;
+                    this.telegramWebhookUrl = data.webhook_url;
+                } catch (e) {
+                    this.telegramError = 'Could not reach Telegram API';
+                }
+            },
+
+            // ── Skills ───────────────────────────────────────────────────────
+
+            async addSkill(skillId) {
+                this.saving = true;
+                this.skillError = '';
+                try {
+                    const res = await apiFetch(`/api/agents/${this.agentId}/skills`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ skill_id: skillId }),
+                    });
+                    if (!res.ok) {
+                        const err = await res.json();
+                        this.skillError = err.detail || 'Failed to add skill';
+                        return;
+                    }
+                    await this.loadConfig();
+                    this.flashSuccess();
+                } catch (_) {
+                    this.skillError = 'Network error';
+                } finally {
+                    this.saving = false;
+                }
+            },
+
+            async removeSkill(skillId) {
+                this.saving = true;
+                this.skillError = '';
+                try {
+                    const res = await apiFetch(`/api/agents/${this.agentId}/skills/${skillId}`, {
+                        method: 'DELETE',
+                    });
+                    if (!res.ok) {
+                        const err = await res.json();
+                        this.skillError = err.detail || 'Failed to remove skill';
+                        return;
+                    }
+                    await this.loadConfig();
+                    this.flashSuccess();
+                } catch (_) {
+                    this.skillError = 'Network error';
+                } finally {
+                    this.saving = false;
+                }
+            },
+
+            // ── Utils ────────────────────────────────────────────────────────
+
+            flashSuccess() {
+                this.saveSuccess = true;
+                setTimeout(() => { this.saveSuccess = false; }, 3000);
+            },
+
+            statusDot(status) {
+                const map = {
+                    active: 'bg-green-100 text-green-700',
+                    idle: 'bg-yellow-100 text-yellow-700',
+                    pending: 'bg-blue-100 text-blue-700',
+                    error: 'bg-red-100 text-red-700',
+                    offline: 'bg-gray-100 text-gray-600',
+                };
+                return map[status] || map.offline;
+            },
+
+            tierBadge(tier) {
+                const map = {
+                    core: { bg: 'bg-gray-100', text: 'text-gray-500' },
+                    connected: { bg: 'bg-blue-50', text: 'text-blue-600' },
+                    premium: { bg: 'bg-purple-50', text: 'text-purple-600' },
+                };
+                return map[tier] || map.core;
+            },
+
+            skillIcon(name) {
+                const icons = {
+                    terminal: '💻', file_ops: '📁', web_extract: '🌐',
+                    planning: '🗺️', code_review: '🔍', github_pr: '🐙',
+                    email: '📧', calendar: '📅', search: '🔎',
+                    database: '🗄️', api_call: '🔌', image_gen: '🎨',
+                };
+                return icons[name] || '⚙️';
+            },
+
+            logout() { logout(); },
+        };
+    }
+    </script>
+</body>
+</html>

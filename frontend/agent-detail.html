@@ -78,6 +78,10 @@
                         <!-- Owner controls -->
                         <template x-if="isOwner">
                             <div class="flex items-center space-x-2">
+                                <a :href="`/agent-config?id=${agent.id}`"
+                                   class="bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700 text-sm font-medium">
+                                    Configure
+                                </a>
                                 <button @click="restartAgent()" :disabled="restarting"
                                         class="bg-gray-100 text-gray-700 px-4 py-2 rounded-md hover:bg-gray-200 disabled:opacity-50">
                                     <span x-show="!restarting">Restart</span>

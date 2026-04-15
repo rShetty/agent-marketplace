@@ -60,6 +60,54 @@ async def invoke(request: Dict):
     }
 
 
+@app.post("/delegate")
+async def delegate(request: Dict):
+    """
+    Hive delegation endpoint — accepts a task from the Hive marketplace.
+
+    In production OpenClaw would run LLM inference here and call the
+    callback_url when done.  This stub accepts immediately so delegation
+    e2e flow works out of the box.
+    """
+    delegation_id = request.get("delegation_id", "unknown")
+    task = request.get("task", "")
+    callback_url = request.get("callback_url")
+
+    result = {
+        "status": "completed",
+        "agent_id": AGENT_ID,
+        "delegation_id": delegation_id,
+        "tokens_used": 1.0,
+        "result": {
+            "output": f"Agent {AGENT_NAME} processed task: {task[:200]}",
+            "agent_id": AGENT_ID,
+        },
+    }
+
+    # Fire-and-forget callback to Hive if provided
+    if callback_url:
+        asyncio.create_task(_send_callback(callback_url, delegation_id, result))
+
+    return result
+
+
+async def _send_callback(callback_url: str, delegation_id: str, result: dict):
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                callback_url,
+                json={
+                    "delegation_id": delegation_id,
+                    "status": "completed",
+                    "result": result.get("result", {}),
+                    "tokens_used": result.get("tokens_used", 1.0),
+                },
+                timeout=15.0,
+            )
+    except Exception as e:
+        print(f"Callback to {callback_url} failed: {e}")
+
+
 async def send_heartbeat():
     """Send heartbeat to Hive."""
     if not HIVE_URL or not HIVE_API_KEY:

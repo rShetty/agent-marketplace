@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from slowapi.errors import RateLimitExceeded
 
 from database import init_db
-from routers import auth, agents, agent_api, skills, deploy, marketplace, invites, wallet, delegation, reviews
+from routers import auth, agents, agent_api, skills, deploy, marketplace, invites, wallet, delegation, reviews, agent_config
 from services.skill_catalog import seed_skills
 from middleware.rate_limit import limiter, rate_limit_exceeded_handler
 from middleware.monitoring import MonitoringMiddleware, metrics
@@ -82,6 +82,7 @@ app.include_router(invites.router)
 app.include_router(wallet.router)
 app.include_router(delegation.router)
 app.include_router(reviews.router)
+app.include_router(agent_config.router)
 
 
 @app.get("/api/health")
@@ -247,6 +248,11 @@ async def settings_page():
 @app.get("/delegate")
 async def delegate_page():
     return _serve_frontend("delegate.html")
+
+
+@app.get("/agent-config")
+async def agent_config_page():
+    return _serve_frontend("agent-config.html")
 
 
 @app.get("/agents/{agent_id}/health")
