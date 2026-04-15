@@ -366,6 +366,13 @@ async def deploy_openclaw_agent(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="OPENCLAW_VPS_SSH_KEY_PATH not configured on server.",
         )
+    import os as _os
+    if not _os.path.isfile(OPENCLAW_VPS_SSH_KEY_PATH):
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"SSH key not found at {OPENCLAW_VPS_SSH_KEY_PATH}. "
+                   "Mount the key into the container or set the correct path.",
+        )
 
     instance_id = str(_uuid.uuid4())
     api_key = f"am-{_secrets.token_urlsafe(32)}"

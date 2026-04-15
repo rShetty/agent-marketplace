@@ -177,13 +177,18 @@ services:
       - PORT=${REMOTE_PORT}
       - DATABASE_URL=sqlite+aiosqlite:////app/data/agent_marketplace.db
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
-      - AGENT_IMAGE=agent-marketplace-agent:latest
-      - MARKETPLACE_URL=http://187.127.140.125:${REMOTE_PORT}
       - SECRET_KEY=${SECRET_KEY}
-      - ALLOWED_ORIGINS=http://187.127.140.125:${REMOTE_PORT},http://localhost:${REMOTE_PORT}
+      - HIVE_URL=http://${REMOTE_SERVER}:${REMOTE_PORT}
+      - ALLOWED_ORIGINS=http://${REMOTE_SERVER}:${REMOTE_PORT},http://localhost:${REMOTE_PORT}
+      - OPENCLAW_VPS_HOST=${OC_HOST}
+      - OPENCLAW_VPS_SSH_KEY_PATH=/root/.ssh/openclaw_deploy_key
+      - OPENCLAW_VPS_SSH_USER=${OC_SSH_USER}
+      - OPENCLAW_VPS_SSH_PORT=${OC_SSH_PORT}
+      - COOKIE_SECURE=1
     volumes:
       - /opt/${APP_NAME}/data:/app/data
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /root/.ssh:/root/.ssh:ro
     restart: unless-stopped
     networks:
       - agent-marketplace
@@ -192,6 +197,16 @@ networks:
   agent-marketplace:
     driver: bridge
 DOCKEREOF
+
+# Ensure the SSH key used for OpenClaw deploys exists and is named correctly.
+# The container mounts /root/.ssh read-only, so we just alias the key.
+if [ -f "${OC_SSH_KEY}" ]; then
+    cp -n "${OC_SSH_KEY}" /root/.ssh/openclaw_deploy_key 2>/dev/null || true
+    chmod 600 /root/.ssh/openclaw_deploy_key
+    echo "OpenClaw SSH key ready at /root/.ssh/openclaw_deploy_key"
+else
+    echo "WARNING: OpenClaw SSH key not found at ${OC_SSH_KEY} — OpenClaw deploy will fail"
+fi
 
 echo "Checking what's using port ${REMOTE_PORT}..."
 ss -tlnp 2>/dev/null | grep ":${REMOTE_PORT}" || true
@@ -255,7 +270,8 @@ ssh "$REMOTE_HOST" "curl -s http://localhost:${REMOTE_PORT}/api/health" > /dev/n
 
 if [ $? -eq 0 ]; then
     log_info "✅ Deployment successful!"
-    log_info "Application is running at: http://187.127.140.125:${REMOTE_PORT}"
+    log_info "Application is running at: http://${REMOTE_SERVER}:${REMOTE_PORT}"
+    log_info "OpenClaw will deploy to: ${OC_HOST} (SSH user: ${OC_SSH_USER})"
 else
     log_warn "Deployment completed but health check failed. The application may still be starting up."
     log_info "Check logs with: ssh $REMOTE_HOST 'cd /opt/${APP_NAME} && docker-compose -f docker-compose.prod.yml logs -f'"

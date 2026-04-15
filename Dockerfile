@@ -7,6 +7,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     curl \
     git \
+    openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
