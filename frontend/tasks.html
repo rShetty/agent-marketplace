@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hive 🐝 — Tasks</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .log-entry { font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; line-height: 1.4; }
+        .log-timestamp { color: #6b7280; }
+        .log-info { color: #60a5fa; }
+        .log-error { color: #f87171; }
+        .log-success { color: #34d399; }
+        .log-warning { color: #fbbf24; }
+        .log-thinking { color: #c4b5fd; }
+        .log-action { color: #fbbf24; }
+        .pulse-dot { animation: pulse 2s cubic-bezier(0.4,0,0.6,1) infinite; }
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+        .task-card { transition: all 0.15s ease; }
+        .task-card:hover { background: #f9fafb; }
+        .task-card.selected { background: #eef2ff; border-left-color: #4f46e5; }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen" x-data="tasksApp()" x-init="init()">
+    <!-- Navigation -->
+    <nav class="bg-white shadow-sm border-b">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16">
+                <div class="flex items-center">
+                    <a href="/" class="flex items-center space-x-2">
+                        <div class="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center">
+                            <span class="text-white font-bold text-lg">H</span>
+                        </div>
+                        <span class="text-xl font-semibold text-gray-900">Hive 🐝</span>
+                    </a>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <a href="/agents" class="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">Browse</a>
+                    <template x-if="isAuthenticated">
+                        <div class="flex items-center space-x-2">
+                            <a href="/tasks" class="text-indigo-600 px-3 py-2 rounded-md text-sm font-medium border border-indigo-600">Tasks</a>
+                            <a href="/deploy" class="bg-green-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-green-700">Deploy Agent</a>
+                            <a href="/settings" class="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">Settings</a>
+                            <button @click="logoutClick()" class="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">Logout</button>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <!-- Header -->
+        <div class="flex items-start justify-between mb-6">
+            <div>
+                <h1 class="text-3xl font-bold text-gray-900">Tasks</h1>
+                <p class="text-gray-600 mt-1">Delegate tasks to agents and watch them run in real time</p>
+            </div>
+            <div class="flex items-center space-x-4">
+                <div class="text-right">
+                    <div class="text-xs text-gray-500">Wallet</div>
+                    <div class="text-lg font-semibold text-gray-900" x-text="walletBalance + ' 🪙'"></div>
+                </div>
+                <button @click="openNewTask()"
+                        class="bg-indigo-600 text-white px-5 py-2.5 rounded-md font-medium hover:bg-indigo-700 shadow-sm">
+                    + New Task
+                </button>
+            </div>
+        </div>
+
+        <!-- Empty state -->
+        <template x-if="delegations.length === 0 && !loading">
+            <div class="bg-white rounded-lg shadow-md p-12 text-center">
+                <div class="w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <span class="text-3xl">📋</span>
+                </div>
+                <h2 class="text-xl font-semibold text-gray-900 mb-2">No tasks yet</h2>
+                <p class="text-gray-500 mb-6">Create your first task to delegate work to an agent.</p>
+                <button @click="openNewTask()"
+                        class="bg-indigo-600 text-white px-6 py-2.5 rounded-md font-medium hover:bg-indigo-700">
+                    + New Task
+                </button>
+            </div>
+        </template>
+
+        <!-- Tasks + logs -->
+        <div x-show="delegations.length > 0" class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <!-- Left column: task list -->
+            <div class="lg:col-span-1 space-y-4">
+                <!-- Active -->
+                <div class="bg-white rounded-lg shadow-sm border">
+                    <div class="px-4 py-3 border-b flex items-center justify-between">
+                        <h3 class="text-sm font-semibold text-gray-900">Active</h3>
+                        <span class="text-xs text-gray-500" x-text="activeCount + ' running'"></span>
+                    </div>
+                    <template x-if="activeTasks.length === 0">
+                        <div class="px-4 py-6 text-center text-sm text-gray-400">
+                            No active tasks
+                        </div>
+                    </template>
+                    <template x-for="t in activeTasks" :key="t.id">
+                        <div class="task-card cursor-pointer border-l-4 border-transparent px-4 py-3 border-b last:border-b-0"
+                             :class="{'selected': selectedId === t.id}"
+                             @click="selectTask(t.id)">
+                            <div class="flex items-start justify-between">
+                                <div class="flex-1 min-w-0">
+                                    <div class="flex items-center space-x-2">
+                                        <div class="w-2 h-2 bg-blue-500 rounded-full pulse-dot flex-shrink-0"></div>
+                                        <span class="text-sm font-medium text-gray-900 truncate"
+                                              x-text="taskTitle(t)"></span>
+                                    </div>
+                                    <div class="text-xs text-gray-500 mt-1" x-text="relativeTime(t.created_at)"></div>
+                                </div>
+                                <div class="text-xs text-gray-600 ml-2 flex-shrink-0" x-text="t.amount + ' 🪙'"></div>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+
+                <!-- Recent -->
+                <div class="bg-white rounded-lg shadow-sm border">
+                    <div class="px-4 py-3 border-b flex items-center justify-between">
+                        <h3 class="text-sm font-semibold text-gray-900">Recent</h3>
+                        <span class="text-xs text-gray-500" x-text="recentTasks.length + ' total'"></span>
+                    </div>
+                    <template x-if="recentTasks.length === 0">
+                        <div class="px-4 py-6 text-center text-sm text-gray-400">No history yet</div>
+                    </template>
+                    <div class="max-h-96 overflow-y-auto">
+                        <template x-for="t in recentTasks" :key="t.id">
+                            <div class="task-card cursor-pointer border-l-4 border-transparent px-4 py-3 border-b last:border-b-0"
+                                 :class="{'selected': selectedId === t.id}"
+                                 @click="selectTask(t.id)">
+                                <div class="flex items-start justify-between">
+                                    <div class="flex-1 min-w-0">
+                                        <div class="flex items-center space-x-2">
+                                            <span :class="statusIcon(t.status).color" class="text-xs font-bold flex-shrink-0"
+                                                  x-text="statusIcon(t.status).icon"></span>
+                                            <span class="text-sm text-gray-900 truncate"
+                                                  x-text="taskTitle(t)"></span>
+                                        </div>
+                                        <div class="text-xs text-gray-500 mt-1" x-text="relativeTime(t.created_at)"></div>
+                                    </div>
+                                    <div class="text-xs text-gray-500 ml-2 flex-shrink-0" x-text="t.amount + ' 🪙'"></div>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right column: task detail + logs -->
+            <div class="lg:col-span-2 space-y-4">
+                <template x-if="!selected">
+                    <div class="bg-white rounded-lg shadow-sm border p-10 text-center text-gray-500">
+                        <div class="text-4xl mb-2">👈</div>
+                        <div class="text-sm">Select a task to see live logs</div>
+                    </div>
+                </template>
+
+                <template x-if="selected">
+                    <div>
+                        <!-- Task header -->
+                        <div class="bg-white rounded-lg shadow-sm border p-5 mb-4">
+                            <div class="flex items-start justify-between mb-3">
+                                <h3 class="text-lg font-semibold text-gray-900" x-text="taskTitle(selected)"></h3>
+                                <span :class="statusBadgeClass(selected.status)" x-text="selected.status"></span>
+                            </div>
+                            <p class="text-sm text-gray-600 whitespace-pre-wrap" x-text="selected.task_description"></p>
+                            <div class="mt-4 grid grid-cols-3 gap-4 text-sm">
+                                <div>
+                                    <div class="text-xs text-gray-500">Budget</div>
+                                    <div class="font-medium text-gray-900" x-text="selected.amount + ' 🪙'"></div>
+                                </div>
+                                <div>
+                                    <div class="text-xs text-gray-500">Created</div>
+                                    <div class="font-medium text-gray-900" x-text="relativeTime(selected.created_at)"></div>
+                                </div>
+                                <div>
+                                    <div class="text-xs text-gray-500">Completed</div>
+                                    <div class="font-medium text-gray-900"
+                                         x-text="selected.completed_at ? relativeTime(selected.completed_at) : '—'"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Live logs -->
+                        <div class="bg-white rounded-lg shadow-sm border">
+                            <div class="px-5 py-3 border-b flex items-center justify-between">
+                                <h3 class="text-sm font-semibold text-gray-900">Live Logs</h3>
+                                <div class="flex items-center space-x-2">
+                                    <div :class="isStreaming ? 'bg-green-500 pulse-dot' : 'bg-gray-300'"
+                                         class="w-2 h-2 rounded-full"></div>
+                                    <span class="text-xs text-gray-500"
+                                          x-text="isStreaming ? 'Streaming' : 'Idle'"></span>
+                                </div>
+                            </div>
+                            <div class="bg-gray-900 p-4 h-96 overflow-y-auto" id="logContainer">
+                                <template x-if="logs.length === 0">
+                                    <div class="text-gray-500 text-sm">Waiting for output…</div>
+                                </template>
+                                <template x-for="(entry, idx) in logs" :key="idx">
+                                    <div class="log-entry mb-1">
+                                        <span class="log-timestamp" x-text="'[' + formatTime(entry.timestamp) + ']'"></span>
+                                        <span :class="'log-' + entry.level" x-text="'[' + (entry.level || 'info').toUpperCase() + ']'"></span>
+                                        <span class="text-gray-300" x-text="entry.message"></span>
+                                        <template x-if="entry.data && Object.keys(entry.data).length">
+                                            <pre class="text-gray-500 ml-4 mt-0.5 text-xs" x-text="JSON.stringify(entry.data, null, 2)"></pre>
+                                        </template>
+                                    </div>
+                                </template>
+                            </div>
+                            <template x-if="selected.task_result">
+                                <div class="px-5 py-3 border-t bg-gray-50">
+                                    <div class="text-xs text-gray-500 mb-1">Result</div>
+                                    <pre class="text-xs text-gray-800 whitespace-pre-wrap" x-text="formatResult(selected.task_result)"></pre>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </div>
+    </div>
+
+    <!-- New Task Modal -->
+    <div x-show="showNewTask"
+         x-transition.opacity
+         @keydown.escape.window="closeNewTask()"
+         class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+         style="display:none">
+        <div @click.stop class="bg-white rounded-lg shadow-xl w-full max-w-lg">
+            <div class="px-6 py-4 border-b flex items-center justify-between">
+                <h2 class="text-lg font-semibold text-gray-900">New Task</h2>
+                <button @click="closeNewTask()" class="text-gray-400 hover:text-gray-600">✕</button>
+            </div>
+            <div class="px-6 py-5 space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Task description</label>
+                    <textarea x-model="newTask.description"
+                              @input.debounce.400ms="refreshEstimate()"
+                              rows="4"
+                              placeholder="Describe what you want the agent to do…"
+                              class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"></textarea>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Agent</label>
+                    <select x-model="newTask.agentId"
+                            @change="refreshEstimate()"
+                            class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm">
+                        <option value="">— select an agent —</option>
+                        <template x-for="a in agents" :key="a.id">
+                            <option :value="a.id" x-text="a.name + ' · ' + agentPricing(a)"></option>
+                        </template>
+                    </select>
+                </div>
+
+                <!-- Estimate panel -->
+                <div class="bg-indigo-50 border border-indigo-100 rounded-md p-4">
+                    <div class="flex items-center justify-between">
+                        <div class="text-sm font-medium text-gray-700">Estimated budget</div>
+                        <div class="text-lg font-bold text-indigo-700"
+                             x-text="(estimate?.estimated_tokens ?? '—') + ' 🪙'"></div>
+                    </div>
+                    <template x-if="estimate">
+                        <div class="mt-2 text-xs text-gray-600 space-y-0.5">
+                            <div>Base <span class="text-gray-900" x-text="estimate.breakdown.base"></span> + length bonus <span class="text-gray-900" x-text="estimate.breakdown.length_bonus"></span> × complexity <span class="text-gray-900" x-text="estimate.breakdown.complexity_multiplier + '×'"></span></div>
+                            <template x-if="estimate.breakdown.matched_keywords && estimate.breakdown.matched_keywords.length">
+                                <div>Signals: <span class="text-gray-900" x-text="estimate.breakdown.matched_keywords.join(', ')"></span></div>
+                            </template>
+                            <template x-if="estimate.breakdown.agent_min_rate > 0">
+                                <div>Agent minimum: <span class="text-gray-900" x-text="estimate.breakdown.agent_min_rate + ' 🪙'"></span></div>
+                            </template>
+                        </div>
+                    </template>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Override budget (optional)</label>
+                    <input type="number"
+                           x-model.number="newTask.overrideTokens"
+                           min="1" max="1000"
+                           placeholder="Leave blank to use estimate"
+                           class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm">
+                </div>
+            </div>
+            <div class="px-6 py-4 bg-gray-50 rounded-b-lg flex items-center justify-between">
+                <div class="text-xs text-gray-500">Wallet: <span x-text="walletBalance + ' 🪙'"></span></div>
+                <div class="flex items-center space-x-2">
+                    <button @click="closeNewTask()"
+                            class="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-md">Cancel</button>
+                    <button @click="submitTask()"
+                            :disabled="isSubmitting || !canSubmit"
+                            class="px-5 py-2 text-sm bg-indigo-600 text-white rounded-md font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed">
+                        <span x-show="!isSubmitting" x-text="'Delegate · ' + effectiveTokens + ' 🪙'"></span>
+                        <span x-show="isSubmitting">Delegating…</span>
+                    </button>
+                </div>
+            </div>
+            <div x-show="submitError" class="px-6 pb-4">
+                <div class="text-sm text-red-600" x-text="submitError"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/app.js"></script>
+    <script>
+        function tasksApp() {
+            return {
+                isAuthenticated: false,
+                loading: true,
+                walletBalance: 0,
+                agents: [],
+                delegations: [],
+                selectedId: null,
+                logs: [],
+                _seenTimestamps: new Set(),
+                eventSource: null,
+                _streamingId: null,
+                _reconnectAttempts: 0,
+                _pollTimer: null,
+                isStreaming: false,
+
+                showNewTask: false,
+                newTask: { description: '', agentId: '', overrideTokens: null },
+                estimate: null,
+                isSubmitting: false,
+                submitError: '',
+
+                async init() {
+                    this.isAuthenticated = isAuthenticated();
+                    if (!this.isAuthenticated) {
+                        window.location.href = '/login?next=/tasks';
+                        return;
+                    }
+                    await Promise.all([this.loadWallet(), this.loadAgents(), this.loadDelegations()]);
+                    this.loading = false;
+
+                    // Honor ?agent_id= & ?task_id= deep-links.
+                    const params = new URLSearchParams(window.location.search);
+                    const taskId = params.get('task_id');
+                    if (taskId && this.delegations.find(d => d.id === taskId)) {
+                        this.selectTask(taskId);
+                    }
+                    const agentPre = params.get('agent_id');
+                    if (agentPre) {
+                        this.newTask.agentId = agentPre;
+                        this.showNewTask = true;
+                        this.refreshEstimate();
+                    }
+
+                    // Refresh list periodically for status updates on other tasks.
+                    this._pollTimer = setInterval(() => this.loadDelegations(true), 15000);
+                },
+
+                logoutClick() {
+                    logout();
+                    window.location.href = '/';
+                },
+
+                async loadWallet() {
+                    try {
+                        const res = await apiFetch('/api/wallet/balance');
+                        if (res.ok) {
+                            const data = await res.json();
+                            this.walletBalance = data.balance;
+                        }
+                    } catch (e) { console.error('wallet', e); }
+                },
+
+                async loadAgents() {
+                    try {
+                        const res = await apiFetch('/api/marketplace/agents?sort=recent&limit=50');
+                        if (res.ok) {
+                            const data = await res.json();
+                            this.agents = data.items || [];
+                        }
+                    } catch (e) { console.error('agents', e); }
+                },
+
+                async loadDelegations(silent = false) {
+                    try {
+                        const res = await apiFetch('/api/delegate/user-delegations?limit=50');
+                        if (res.ok) {
+                            const data = await res.json();
+                            const prev = this.delegations;
+                            this.delegations = data.delegations || [];
+                            // If the selected task updated its status/completion, refresh its card.
+                            if (this.selectedId) {
+                                const fresh = this.delegations.find(d => d.id === this.selectedId);
+                                if (fresh) {
+                                    // Keep task_result if we have it locally (list endpoint omits it).
+                                    fresh.task_result = fresh.task_result
+                                        || (prev.find(d => d.id === this.selectedId) || {}).task_result;
+                                }
+                            }
+                        }
+                    } catch (e) { if (!silent) console.error('delegations', e); }
+                },
+
+                get selected() {
+                    return this.delegations.find(d => d.id === this.selectedId) || null;
+                },
+
+                get activeTasks() {
+                    return this.delegations.filter(d => d.status === 'pending');
+                },
+
+                get recentTasks() {
+                    return this.delegations.filter(d => d.status !== 'pending');
+                },
+
+                get activeCount() { return this.activeTasks.length; },
+
+                get canSubmit() {
+                    return this.newTask.description.trim().length > 0
+                        && this.newTask.agentId
+                        && this.effectiveTokens > 0
+                        && this.effectiveTokens <= this.walletBalance;
+                },
+
+                get effectiveTokens() {
+                    if (this.newTask.overrideTokens && this.newTask.overrideTokens > 0) {
+                        return Math.min(1000, Math.floor(this.newTask.overrideTokens));
+                    }
+                    return this.estimate?.estimated_tokens || 0;
+                },
+
+                taskTitle(t) {
+                    const d = (t.task_description || '').trim().split('\n')[0];
+                    return d.length > 60 ? d.slice(0, 60) + '…' : (d || 'Untitled task');
+                },
+
+                statusIcon(s) {
+                    if (s === 'completed') return { icon: '✓', color: 'text-green-600' };
+                    if (s === 'failed')    return { icon: '✗', color: 'text-red-600' };
+                    if (s === 'pending')   return { icon: '●', color: 'text-blue-600' };
+                    return { icon: '·', color: 'text-gray-400' };
+                },
+
+                statusBadgeClass(s) {
+                    const map = {
+                        pending:   'bg-blue-100 text-blue-800',
+                        completed: 'bg-green-100 text-green-800',
+                        failed:    'bg-red-100 text-red-800',
+                    };
+                    return 'px-2.5 py-1 text-xs rounded-full font-medium ' + (map[s] || 'bg-gray-100 text-gray-800');
+                },
+
+                agentPricing(a) {
+                    const pm = a.pricing_model;
+                    if (!pm) return 'free';
+                    if (pm.type === 'token') return (pm.rate || 0) + ' 🪙 min';
+                    return pm.type || 'free';
+                },
+
+                relativeTime(iso) {
+                    if (!iso) return '—';
+                    const t = new Date(iso).getTime();
+                    const diff = Math.floor((Date.now() - t) / 1000);
+                    if (diff < 60) return 'just now';
+                    if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+                    if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+                    return Math.floor(diff / 86400) + 'd ago';
+                },
+
+                formatTime(iso) {
+                    if (!iso) return '--:--:--';
+                    return new Date(iso).toLocaleTimeString();
+                },
+
+                formatResult(r) {
+                    if (!r) return '';
+                    if (typeof r === 'string') return r;
+                    if (r.output) return typeof r.output === 'string' ? r.output : JSON.stringify(r.output, null, 2);
+                    return JSON.stringify(r, null, 2);
+                },
+
+                // ─── selecting a task and streaming its logs ────────────────
+                async selectTask(id) {
+                    this.selectedId = id;
+                    this.logs = [];
+                    this._seenTimestamps = new Set();
+                    this._reconnectAttempts = 0;
+                    this._closeStream();
+
+                    // Fetch persisted history immediately; SSE will also replay
+                    // and we de-dupe on timestamp, so this is just fast first paint.
+                    try {
+                        const res = await apiFetch(`/api/delegate/${id}/user-logs`);
+                        if (res.ok) {
+                            const data = await res.json();
+                            for (const entry of (data.logs || [])) this._appendLog(entry);
+                        }
+                    } catch (e) { console.error('logs', e); }
+
+                    // Only stream if not already terminal.
+                    const sel = this.delegations.find(d => d.id === id);
+                    if (sel && sel.status !== 'pending') {
+                        this.isStreaming = false;
+                        return;
+                    }
+                    this._startStream(id);
+                },
+
+                _startStream(id) {
+                    const token = getToken();
+                    const url = `/api/delegate/${id}/user-stream?token=${encodeURIComponent(token)}`;
+                    const es = new EventSource(url);
+                    this.eventSource = es;
+                    this._streamingId = id;
+
+                    es.onopen = () => {
+                        this.isStreaming = true;
+                        this._reconnectAttempts = 0;
+                    };
+                    es.onmessage = (ev) => {
+                        try {
+                            const payload = JSON.parse(ev.data);
+                            this._handleEvent(payload);
+                        } catch (e) { console.error('sse parse', e); }
+                    };
+                    es.onerror = () => {
+                        this.isStreaming = false;
+                        this._closeStream(false);
+                        if (!this._streamingId) return;
+                        this._reconnectAttempts++;
+                        if (this._reconnectAttempts > 5) return;
+                        const delay = Math.min(1000 * this._reconnectAttempts, 5000);
+                        setTimeout(() => { if (this._streamingId === id) this._startStream(id); }, delay);
+                    };
+                },
+
+                _handleEvent(payload) {
+                    if (payload.type === 'log') {
+                        this._appendLog(payload.data || {});
+                    } else if (payload.type === 'status') {
+                        const status = payload.data?.status;
+                        const sel = this.delegations.find(d => d.id === this._streamingId);
+                        if (sel && status) sel.status = status;
+                        if (status === 'completed' || status === 'failed') {
+                            this.loadWallet();
+                            this.loadDelegations(true);
+                        }
+                    } else if (payload.type === 'done') {
+                        this._closeStream();
+                        this.loadDelegations(true);
+                    }
+                },
+
+                _appendLog(entry) {
+                    if (entry.timestamp && this._seenTimestamps.has(entry.timestamp)) return;
+                    if (entry.timestamp) this._seenTimestamps.add(entry.timestamp);
+                    this.logs.push(entry);
+                    this.$nextTick(() => {
+                        const c = document.getElementById('logContainer');
+                        if (c) c.scrollTop = c.scrollHeight;
+                    });
+                },
+
+                _closeStream(clearId = true) {
+                    if (this.eventSource) {
+                        this.eventSource.close();
+                        this.eventSource = null;
+                    }
+                    this.isStreaming = false;
+                    if (clearId) this._streamingId = null;
+                },
+
+                // ─── new task modal ─────────────────────────────────────────
+                openNewTask() {
+                    this.showNewTask = true;
+                    this.submitError = '';
+                    if (!this.newTask.description) this.newTask.description = '';
+                    this.refreshEstimate();
+                },
+
+                closeNewTask() {
+                    this.showNewTask = false;
+                    this.newTask = { description: '', agentId: this.newTask.agentId, overrideTokens: null };
+                    this.estimate = null;
+                    this.submitError = '';
+                },
+
+                async refreshEstimate() {
+                    const desc = this.newTask.description.trim();
+                    if (!desc) { this.estimate = null; return; }
+                    try {
+                        const res = await apiFetch('/api/delegate/estimate', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                task_description: desc,
+                                target_agent_id: this.newTask.agentId || null,
+                            }),
+                        });
+                        if (res.ok) this.estimate = await res.json();
+                    } catch (e) { console.error('estimate', e); }
+                },
+
+                async submitTask() {
+                    if (!this.canSubmit) return;
+                    this.isSubmitting = true;
+                    this.submitError = '';
+                    try {
+                        const res = await apiFetch('/api/delegate/user-request', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                target_agent_id: this.newTask.agentId,
+                                task_description: this.newTask.description.trim(),
+                                max_tokens: this.effectiveTokens,
+                                timeout_seconds: 300,
+                            }),
+                        });
+                        if (!res.ok) {
+                            const err = await res.json().catch(() => ({}));
+                            this.submitError = err.detail || `Request failed (${res.status})`;
+                            return;
+                        }
+                        const data = await res.json();
+                        this.showNewTask = false;
+                        this.newTask = { description: '', agentId: '', overrideTokens: null };
+                        this.estimate = null;
+                        await this.loadDelegations();
+                        await this.loadWallet();
+                        this.selectTask(data.delegation_id);
+                    } catch (e) {
+                        this.submitError = e.message || 'Failed to create task';
+                    } finally {
+                        this.isSubmitting = false;
+                    }
+                },
+            };
+        }
+    </script>
+</body>
+</html>

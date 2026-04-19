@@ -334,6 +334,16 @@ class DelegationComplete(HiveBaseModel):
     tokens_used: float
 
 
+class TokenEstimateRequest(HiveBaseModel):
+    task_description: str
+    target_agent_id: Optional[str] = None
+
+
+class TokenEstimateResponse(HiveBaseModel):
+    estimated_tokens: int
+    breakdown: Dict[str, Any]
+
+
 # ============== Review Schemas ==============
 
 class AgentReviewCreate(HiveBaseModel):

@@ -27,6 +27,7 @@
                     <a href="/agents" class="text-gray-600 hover:text-gray-900">Browse</a>
                     <template x-if="isAuthenticated">
                         <div class="flex items-center space-x-2">
+                            <a href="/tasks" class="text-gray-600 hover:text-gray-900">Tasks</a>
                             <a href="/deploy" class="bg-green-600 text-white px-4 py-2 rounded-md">Deploy Agent</a>
                             <button @click="logout()" class="text-gray-600 hover:text-gray-900">Logout</button>
                         </div>
@@ -70,7 +71,7 @@
                     <div class="flex items-center space-x-2">
                         <!-- Delegate button — visible to authenticated users for public agents -->
                         <template x-if="isAuthenticated && agent.is_public">
-                            <a :href="`/delegate?agent_id=${agent.id}`"
+                            <a :href="`/tasks?agent_id=${agent.id}`"
                                class="bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700">
                                 Delegate Task
                             </a>

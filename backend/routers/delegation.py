@@ -33,7 +33,13 @@ from models.user import User
 from models.wallet import Wallet
 from models.transaction import Transaction, TransactionType, TransactionStatus
 from models.delegation_log import DelegationLog
-from schemas import DelegationRequest, DelegationResponse, DelegationComplete
+from schemas import (
+    DelegationRequest,
+    DelegationResponse,
+    DelegationComplete,
+    TokenEstimateRequest,
+    TokenEstimateResponse,
+)
 from routers.agent_api import get_agent_from_api_key
 from routers.wallet import get_or_create_wallet
 from services.agent_client import (
@@ -320,6 +326,72 @@ async def _mark_failed(delegation_id: str, reason: str, message: str) -> None:
         await session.commit()
 
     await set_delegation_status(delegation_id, "failed")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+#  Token estimation — suggests a budget based on task + target agent
+# ══════════════════════════════════════════════════════════════════════════
+
+# Verbs that signal heavier reasoning or output volume. Matching is done
+# against lower-cased description using plain substring containment so
+# variants like "analyzing" or "researched" still count.
+_COMPLEXITY_KEYWORDS = (
+    "research", "analyz", "analys", "write", "compare", "summari",
+    "draft", "plan", "review", "design", "build", "create", "implement",
+    "translate", "debug", "optimi", "generate", "explain", "investigat",
+    "evaluat", "refactor", "benchmark",
+)
+
+
+def _estimate_task_tokens(description: str, agent_min_rate: float) -> dict:
+    """Heuristic token budget: base + length bonus × complexity multiplier.
+
+    Transparent rather than smart — the breakdown is surfaced in the UI so
+    the user can see exactly why a number was suggested and override it.
+    """
+    desc = (description or "").strip()
+    base = 20
+    length_bonus = min(80, len(desc) // 10)  # 1 token per 10 chars, capped
+
+    desc_lower = desc.lower()
+    matched = sorted({kw for kw in _COMPLEXITY_KEYWORDS if kw in desc_lower})
+    multiplier = 1.0 + 0.2 * min(4, len(matched))  # up to 1.8× at 4+ hits
+
+    raw = (base + length_bonus) * multiplier
+    estimated = max(agent_min_rate, raw)
+    estimated = max(10, min(1000, int(round(estimated))))
+
+    return {
+        "estimated_tokens": estimated,
+        "breakdown": {
+            "base": base,
+            "length_bonus": length_bonus,
+            "complexity_multiplier": round(multiplier, 2),
+            "matched_keywords": matched[:6],
+            "agent_min_rate": float(agent_min_rate),
+            "description_chars": len(desc),
+        },
+    }
+
+
+@router.post("/estimate", response_model=TokenEstimateResponse)
+async def estimate_delegation_tokens(
+    payload: TokenEstimateRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Estimate how many tokens a task will cost on a given agent."""
+    agent_min = Decimal("0")
+    if payload.target_agent_id:
+        result = await db.execute(
+            select(Agent).where(Agent.id == payload.target_agent_id)
+        )
+        agent = result.scalar_one_or_none()
+        if agent and agent.pricing_model:
+            if agent.pricing_model.get("type") == "token":
+                agent_min = Decimal(str(agent.pricing_model.get("rate", 0)))
+
+    return _estimate_task_tokens(payload.task_description, float(agent_min))
 
 
 # ══════════════════════════════════════════════════════════════════════════

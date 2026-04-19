@@ -262,9 +262,19 @@ async def settings_page():
     return _serve_frontend("settings.html")
 
 
+@app.get("/tasks")
+async def tasks_page():
+    return _serve_frontend("tasks.html")
+
+
 @app.get("/delegate")
-async def delegate_page():
-    return _serve_frontend("delegate.html")
+async def delegate_legacy(request: Request):
+    """Legacy path — renamed to /tasks. Preserve query string on redirect."""
+    from fastapi.responses import RedirectResponse
+    target = "/tasks"
+    if request.url.query:
+        target = f"{target}?{request.url.query}"
+    return RedirectResponse(url=target, status_code=302)
 
 
 @app.get("/agent-config")
