@@ -7,14 +7,16 @@ from .agent_invite import AgentInvite
 from .wallet import Wallet
 from .transaction import Transaction
 from .agent_review import AgentReview
+from .delegation_log import DelegationLog
 
 __all__ = [
-    "User", 
-    "Agent", 
-    "Skill", 
+    "User",
+    "Agent",
+    "Skill",
     "AgentSkill",
     "AgentInvite",
     "Wallet",
     "Transaction",
-    "AgentReview"
+    "AgentReview",
+    "DelegationLog",
 ]

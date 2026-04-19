@@ -410,41 +410,117 @@ async def invoke(request: Dict):
 
 @app.post("/delegate")
 async def delegate(request: Dict):
-    """Hive delegation endpoint."""
+    """Hive delegation endpoint.
+
+    Returns ``in_progress`` immediately so Hive can respond to the requester
+    in <100 ms; the real work runs in a background task that pushes progress
+    updates over HTTP while executing and signs a completion callback at the
+    end. This exercises the full streaming path on the Hive side.
+    """
     delegation_id = request.get("delegation_id", "unknown")
     task = request.get("task", "")
     callback_url = request.get("callback_url")
 
     _log_activity("delegation", f"Task: {str(task)[:80]}", {"delegation_id": delegation_id})
 
-    result = {
-        "status": "completed",
+    asyncio.create_task(_run_delegation(delegation_id, task, callback_url))
+
+    return {
+        "status": "in_progress",
         "agent_id": AGENT_ID,
         "delegation_id": delegation_id,
-        "tokens_used": 1.0,
-        "result": {
-            "output": f"[{AGENT_NAME}] Task received: {task[:200]}. Connect an LLM via Hive to enable real task execution.",
-            "agent_id": AGENT_ID,
-        },
     }
 
-    if callback_url:
-        asyncio.create_task(_send_callback(callback_url, delegation_id, result))
 
-    return result
-
-
-async def _send_callback(callback_url: str, delegation_id: str, result: dict):
+async def _post_progress(delegation_id: str, level: str, message: str, data: dict | None = None):
+    """Send a progress update to Hive so it streams out over SSE."""
+    if not HIVE_URL or not HIVE_API_KEY:
+        return
     try:
-        async with httpx.AsyncClient() as client:
-            await client.post(callback_url, json={
-                "delegation_id": delegation_id,
-                "status": "completed",
-                "result": result.get("result", {}),
-                "tokens_used": result.get("tokens_used", 1.0),
-            }, timeout=15.0)
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            await client.post(
+                f"{HIVE_URL}/api/delegate/{delegation_id}/progress",
+                headers={"X-API-Key": HIVE_API_KEY, "Content-Type": "application/json"},
+                json={"level": level, "message": message, "data": data or {}},
+            )
     except Exception as e:
-        _log_activity("error", f"Callback failed: {e}")
+        _log_activity("error", f"Progress post failed: {e}")
+
+
+async def _run_delegation(delegation_id: str, task: str, callback_url: str | None):
+    """Execute the delegation in the background with streamed progress."""
+    try:
+        await _post_progress(delegation_id, "thinking", "Reading task and planning steps")
+        await asyncio.sleep(0.8)
+
+        await _post_progress(
+            delegation_id,
+            "action",
+            f"Processing: {task[:120]}",
+        )
+        await asyncio.sleep(0.8)
+
+        llm_configured = any(
+            os.getenv(k) for k in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY",
+                                    "OPENROUTER_API_KEY", "GOOGLE_API_KEY")
+        )
+        if llm_configured:
+            await _post_progress(delegation_id, "info", "Calling configured LLM")
+        else:
+            await _post_progress(
+                delegation_id,
+                "warning",
+                "No LLM configured — returning stub response",
+            )
+
+        await asyncio.sleep(0.5)
+
+        result_payload = {
+            "output": (
+                f"[{AGENT_NAME}] Task received: {task[:200]}. "
+                "Connect an LLM via Hive to enable real task execution."
+            ),
+            "agent_id": AGENT_ID,
+        }
+
+        await _post_progress(delegation_id, "success", "Task complete")
+        await _complete_delegation(delegation_id, result_payload, tokens_used=1.0)
+    except Exception as e:
+        _log_activity("error", f"Delegation {delegation_id} failed: {e}")
+        await _post_progress(delegation_id, "error", f"Execution failed: {e}")
+        await _fail_delegation(delegation_id, str(e))
+
+
+async def _complete_delegation(delegation_id: str, result: dict, tokens_used: float):
+    """Call Hive's /complete endpoint (API-key auth) to settle the delegation."""
+    if not HIVE_URL or not HIVE_API_KEY:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(
+                f"{HIVE_URL}/api/delegate/{delegation_id}/complete",
+                headers={"X-API-Key": HIVE_API_KEY, "Content-Type": "application/json"},
+                json={"result": result, "tokens_used": tokens_used},
+            )
+            if resp.status_code >= 400:
+                _log_activity("error", f"Complete {resp.status_code}: {resp.text[:200]}")
+    except Exception as e:
+        _log_activity("error", f"Complete failed: {e}")
+
+
+async def _fail_delegation(delegation_id: str, reason: str):
+    """Call Hive's /fail endpoint so tokens get refunded."""
+    if not HIVE_URL or not HIVE_API_KEY:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            await client.post(
+                f"{HIVE_URL}/api/delegate/{delegation_id}/fail",
+                headers={"X-API-Key": HIVE_API_KEY},
+                params={"reason": reason[:200]},
+            )
+    except Exception as e:
+        _log_activity("error", f"Fail callback errored: {e}")
 
 
 async def _send_heartbeat():

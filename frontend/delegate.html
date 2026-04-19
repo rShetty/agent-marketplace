@@ -373,23 +373,16 @@
                         alert('Please fill in all required fields');
                         return;
                     }
+                    if (parseFloat(this.taskForm.maxTokens) <= 0) {
+                        alert('Max tokens must be greater than 0');
+                        return;
+                    }
 
                     this.isDelegating = true;
                     this.logs = [];
+                    this._reconnectAttempts = 0;
 
                     try {
-                        // Validate inputs
-                        if (!this.taskForm.description || !this.taskForm.selectedAgentId) {
-                            alert('Please fill in all required fields');
-                            return;
-                        }
-                        
-                        if (parseFloat(this.taskForm.maxTokens) <= 0) {
-                            alert('Max tokens must be greater than 0');
-                            return;
-                        }
-
-                        // Create delegation (user endpoint)
                         const res = await apiFetch('/api/delegate/user-request', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
@@ -405,16 +398,15 @@
                             const data = await res.json();
                             this.activeDelegation = {
                                 id: data.delegation_id,
-                                status: data.status,
+                                status: data.status || 'pending',
                                 task_description: this.taskForm.description,
                                 amount: this.taskForm.maxTokens
                             };
                             this.targetAgentName = this.selectedAgent?.name || 'Unknown Agent';
-                            
-                            // Start streaming logs
+
+                            // Submission returns in <100ms now — open SSE immediately
+                            // while the agent call is still running in the background.
                             this.startStreaming(data.delegation_id);
-                            
-                            // Refresh wallet
                             await this.loadWallet();
                         } else {
                             const error = await res.json();
@@ -429,52 +421,82 @@
                 },
 
                 startStreaming(delegationId) {
-                    // Close existing connection
                     if (this.eventSource) {
                         this.eventSource.close();
+                        this.eventSource = null;
                     }
 
-                    this.isStreaming = true;
-                    
-                    // Pass JWT as query param because EventSource cannot set headers
+                    // Remember the most recent log timestamp so reconnects can
+                    // de-dupe history that the server replays.
+                    this._seenTimestamps = new Set(this.logs.map(l => l.timestamp));
+
                     const token = getToken();
                     const url = `/api/delegate/${delegationId}/user-stream?token=${encodeURIComponent(token)}`;
                     this.eventSource = new EventSource(url);
+                    this._streamingId = delegationId;
+
+                    this.eventSource.onopen = () => {
+                        this.isStreaming = true;
+                        this._reconnectAttempts = 0;
+                    };
 
                     this.eventSource.onmessage = (event) => {
                         try {
-                            const data = JSON.parse(event.data);
-                            
-                            if (data.type === 'log') {
-                                this.logs.push(data.data);
-                                this.scrollToBottom();
-                            } else if (data.type === 'status') {
-                                if (this.activeDelegation) {
-                                    this.activeDelegation.status = data.data.status;
-                                    if (data.data.completed_at) {
-                                        this.activeDelegation.completed_at = data.data.completed_at;
-                                    }
-                                }
-                                this.addSystemLog(`Status: ${data.data.status}`);
-                            }
+                            const payload = JSON.parse(event.data);
+                            this.handleSseEvent(payload);
                         } catch (e) {
-                            console.error('Failed to parse SSE event:', e);
+                            console.error('Failed to parse SSE event:', e, event.data);
                         }
                     };
 
                     this.eventSource.onerror = () => {
-                        console.error('SSE connection error');
                         this.isStreaming = false;
                         if (this.eventSource) {
                             this.eventSource.close();
+                            this.eventSource = null;
                         }
-                    };
+                        // Only reconnect if we haven't already terminated.
+                        const terminal = this.activeDelegation?.status === 'completed'
+                                      || this.activeDelegation?.status === 'failed';
+                        if (terminal || !this._streamingId) return;
 
-                    this.eventSource.onopen = () => {
-                        console.log('SSE connection opened');
-                        this.isStreaming = true;
-                        this.addSystemLog('Connected to delegation stream');
+                        this._reconnectAttempts = (this._reconnectAttempts || 0) + 1;
+                        if (this._reconnectAttempts > 5) {
+                            this.addSystemLog('Stream disconnected — giving up after 5 retries');
+                            return;
+                        }
+                        const delay = Math.min(1000 * this._reconnectAttempts, 5000);
+                        this.addSystemLog(`Stream disconnected — reconnecting in ${Math.round(delay/1000)}s…`);
+                        setTimeout(() => this.startStreaming(this._streamingId), delay);
                     };
+                },
+
+                handleSseEvent(payload) {
+                    if (payload.type === 'log') {
+                        const entry = payload.data || {};
+                        // De-dupe history replayed on reconnect.
+                        if (entry.timestamp && this._seenTimestamps.has(entry.timestamp)) return;
+                        if (entry.timestamp) this._seenTimestamps.add(entry.timestamp);
+                        this.logs.push(entry);
+                        this.scrollToBottom();
+                    } else if (payload.type === 'status') {
+                        const status = payload.data?.status;
+                        if (this.activeDelegation && status) {
+                            this.activeDelegation.status = status;
+                        }
+                        // Refresh wallet when the task ends (refunds / settlements).
+                        if (status === 'completed' || status === 'failed') {
+                            this.loadWallet();
+                        }
+                    } else if (payload.type === 'done') {
+                        // Server has no more events to send; close cleanly.
+                        this.isStreaming = false;
+                        if (this.eventSource) {
+                            this.eventSource.close();
+                            this.eventSource = null;
+                        }
+                        this._streamingId = null;
+                    }
                 },
 
                 addSystemLog(message) {
@@ -502,6 +524,7 @@
                         this.eventSource = null;
                     }
                     this.isStreaming = false;
+                    this._streamingId = null;
                     this.activeDelegation = null;
                 },
 
