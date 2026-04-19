@@ -233,8 +233,12 @@ async def _provision_nginx_subdomain(
     not directly to the container — this keeps authentication in place.
     """
     subdomain = f"{slug}.{HIVE_DOMAIN}"
-    # Proxy to Hive's authenticated dashboard proxy, not directly to the container
-    hive_port = int(HIVE_URL.split(":")[-1]) if ":" in HIVE_URL else 8080
+    # Proxy to Hive's authenticated dashboard proxy, not directly to the container.
+    # Parse the port from HIVE_URL safely; fall back to 8080 when no explicit port
+    # is present (e.g. https://hive.rajeev.me has no port in the URL).
+    from urllib.parse import urlparse as _urlparse
+    _parsed_hive = _urlparse(HIVE_URL)
+    hive_port = _parsed_hive.port or 8080
 
     # If a wildcard cert is configured reuse it; otherwise run certbot
     if HIVE_SSL_CERT and HIVE_SSL_KEY:

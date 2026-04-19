@@ -2,7 +2,7 @@ services:
   marketplace:
     build: .
     ports:
-      - "127.0.0.1:8081:8000"
+      - "127.0.0.1:8080:8080"
     environment:
       - DATABASE_URL=sqlite+aiosqlite:////app/data/agent_marketplace.db
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:?Set ENCRYPTION_KEY before starting}
