@@ -1,0 +1,123 @@
+name: Deploy Hive
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hive-production
+  cancel-in-progress: true
+
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Gitleaks
+        uses: gitleaks/gitleaks-action@dcedce43c6f43de0b836d1fe38946645c9c638dc # v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@d2a0b60797ff03db6132bd4e2b293f9b37081297 # master
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          severity: HIGH,CRITICAL
+          exit-code: 1
+
+  deploy:
+    needs: [security]
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Connect to tailnet
+        uses: tailscale/github-action@306e68a486fd2350f2bfc3b19fcd143891a4a2d8 # v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:hostinger
+          ping: ${{ secrets.VPS_HOST }}
+      - name: Deploy via SSH over Tailscale
+        id: ssh
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: 22
+          timeout: 120s
+          command_timeout: 30m
+          script: |
+            set -euo pipefail
+
+            # Repo checkout (idempotent)
+            if [ ! -d /opt/hive/.git ]; then
+              rm -rf /opt/hive
+              git clone https://github.com/rShetty/hive.git /opt/hive
+            fi
+            cd /opt/hive
+            git fetch origin main
+            git reset --hard origin/main
+            # NEVER clean blindly: ./data holds the production SQLite DB and
+            # a legacy /opt/hive/.env may hold crypto keys. Exclude both.
+            git clean -fd -e data -e .env
+
+            # Env file lives OUTSIDE the repo so checkouts can never touch it.
+            mkdir -p /etc/hive
+            touch /etc/hive/hive.env
+            chmod 600 /etc/hive/hive.env
+
+            # One-time migration of legacy in-repo .env (preserve existing keys).
+            if [ -f /opt/hive/.env ] && ! grep -q "^ENCRYPTION_KEY=" /etc/hive/hive.env; then
+              grep -E "^(ENCRYPTION_KEY|SECRET_KEY|HIVE_SIGNING_SECRET)=" /opt/hive/.env >> /etc/hive/hive.env || true
+              chmod 600 /etc/hive/hive.env
+            fi
+
+            # Fill gaps only — never rotate existing crypto keys (data unreadable otherwise).
+            grep -q "^OPENROUTER_API_KEY=" /etc/hive/hive.env || echo "OPENROUTER_API_KEY=${{ secrets.OPENROUTER_API_KEY }}" >> /etc/hive/hive.env
+            grep -q "^ENCRYPTION_KEY=" /etc/hive/hive.env || echo "ENCRYPTION_KEY=${{ secrets.ENCRYPTION_KEY }}" >> /etc/hive/hive.env
+            grep -q "^SECRET_KEY=" /etc/hive/hive.env || echo "SECRET_KEY=${{ secrets.SECRET_KEY }}" >> /etc/hive/hive.env
+            grep -q "^HIVE_SIGNING_SECRET=" /etc/hive/hive.env || echo "HIVE_SIGNING_SECRET=$(openssl rand -hex 32)" >> /etc/hive/hive.env
+            chmod 600 /etc/hive/hive.env
+
+            DC="docker compose"
+            docker compose version >/dev/null 2>&1 || DC="docker-compose"
+
+            # Build first; on build failure the running stack is left untouched.
+            $DC --env-file /etc/hive/hive.env -f docker-compose.prod.yml build --pull
+            $DC --env-file /etc/hive/hive.env -f docker-compose.prod.yml up -d --remove-orphans
+
+            # Health check with retries
+            sleep 8
+            for i in 1 2 3 4 5 6 7 8 9 10; do
+              if curl -sf http://127.0.0.1:8080/api/health >/dev/null; then
+                echo ""
+                echo "DEPLOY SUCCESS: hive.rajeev.me is healthy"
+                $DC -f docker-compose.prod.yml ps
+                exit 0
+              fi
+              echo "Health check attempt $i failed, waiting..."
+              sleep 6
+            done
+
+            echo "ERROR: Health check failed"
+            $DC -f docker-compose.prod.yml logs --tail 50 marketplace
+            exit 1
+
+      - name: Deploy failed
+        if: failure() && steps.ssh.outcome == 'failure'
+        run: |
+          echo "::error::Hive deploy failed over Tailscale. Check the ssh-action logs above."
+          exit 1
