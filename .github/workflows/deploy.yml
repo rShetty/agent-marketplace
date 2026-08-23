@@ -97,6 +97,12 @@ jobs:
 
             # Build first; on build failure the running stack is left untouched.
             $DC --env-file /etc/hive/hive.env -f docker-compose.prod.yml build --pull
+
+            # Remove stale containers left by pre-CI manual deploys whose compose
+            # labels don't match ours (blocks name reuse). Data is safe: SQLite
+            # lives on ./data bind mount, Redis state in the redis-data volume.
+            docker rm -f hive-marketplace-1 hive-redis-1 hive-docker-socket-proxy-1 2>/dev/null || true
+
             $DC --env-file /etc/hive/hive.env -f docker-compose.prod.yml up -d --remove-orphans
 
             # Health check with retries
