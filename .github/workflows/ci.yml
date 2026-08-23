@@ -223,6 +223,12 @@ jobs:
     needs: [secret-scan, dependency-audit, codeql, hardening-check, backend-smoke]
     if: ${{ (github.event_name == 'push' && needs.secret-scan.result == 'success' && needs.dependency-audit.result == 'success' && needs.codeql.result == 'success' && needs.hardening-check.result == 'success' && needs.backend-smoke.result == 'success') || github.event_name == 'workflow_dispatch' }}
     steps:
+      - name: Connect to tailnet
+        uses: tailscale/github-action@306e68a486fd2350f2bfc3b19fcd143891a4a2d8 # v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:hostinger
       - name: Deploy via SSH (with retries)
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1
         with:
