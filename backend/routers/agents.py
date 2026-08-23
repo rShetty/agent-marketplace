@@ -80,8 +80,12 @@ async def list_agents(
     total_result = await db.execute(count_query)
     total_count = total_result.scalar()
     
-    # Order by most recently active
-    query = query.order_by(Agent.last_seen.desc().nullslast())
+    # Order by most recently active; never-seen agents (last_seen NULL) fall
+    # back to newest-created so freshly registered agents are visible.
+    query = query.order_by(
+        Agent.last_seen.desc().nullslast(),
+        Agent.created_at.desc(),
+    )
     query = query.limit(limit).offset(offset)
     
     result = await db.execute(query)
