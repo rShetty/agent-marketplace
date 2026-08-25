@@ -176,17 +176,28 @@ async def _register_client(server: MCPServer, meta: dict, redirect_uri: str) -> 
     """Resolve a client id/secret.
 
     Strategy:
-      1. **Dynamic Client Registration** when the provider advertises a
+      1. **CIMD / pre-registered credentials** supplied for this MCP server.
+         These take precedence so an operator can pin a client identity even
+         when the provider also advertises DCR.
+      2. **Previously-DCR'd credentials** cached in ``oauth_encrypted``.
+      3. **Dynamic Client Registration** when the provider advertises a
          ``registration_endpoint`` (i.e. DCR is supported). The freshly
          registered client is persisted for reuse.
-      2. **Static credentials** stored on the server row (``oauth_client_id`` /
-         ``oauth_client_secret``) — used for providers without DCR, or as a
-         fallback when DCR is unavailable.
-      3. Previously-DCR'd credentials cached in ``oauth_encrypted``.
 
     If neither DCR nor static creds are available, a clear 400 is raised.
     """
-    # 1. DCR when supported.
+
+    # 1. CIMD / pre-registered identity wins.
+    sid, ssec = _static_creds(server)
+    if sid:
+        return sid, ssec
+
+    # 2. Reuse a prior dynamic registration.
+    cid, csec = _stored_creds(server)
+    if cid:
+        return cid, csec
+
+    # 3. Dynamic registration.
     if meta.get("registration_endpoint") and not meta.get("no_dynamic_registration"):
         dcr = await _try_dcr(meta, redirect_uri)
         if dcr and dcr[0]:
@@ -195,16 +206,6 @@ async def _register_client(server: MCPServer, meta: dict, redirect_uri: str) -> 
             blob = {**(stored or {}), "client_id": client_id, "client_secret": client_secret}
             server.oauth_encrypted = encrypt_json(blob)
             return client_id, client_secret
-
-    # 2. Static pre-registered credentials.
-    sid, ssec = _static_creds(server)
-    if sid:
-        return sid, ssec
-
-    # 3. Previously cached DCR credentials.
-    cid, csec = _stored_creds(server)
-    if cid:
-        return cid, csec
 
     # Nothing available.
     if meta.get("no_dynamic_registration") or not meta.get("registration_endpoint"):
