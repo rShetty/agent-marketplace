@@ -147,7 +147,8 @@ pytest
 
 ## Ecosystem
 
-Hive is part of a six-project AI governance ecosystem for enterprises:
+Hive is part of the AI governance ecosystem. Governance Hub is the browser
+surface for these backend services.
 
 | Project | Role | Repo |
 |---|---|---|
@@ -157,12 +158,19 @@ Hive is part of a six-project AI governance ecosystem for enterprises:
 | **Miser** | LLM cost optimization | [rShetty/miser](https://github.com/rShetty/miser) |
 | **Sentiel** | Observability, DLP & compliance | [rShetty/sentiel](https://github.com/rShetty/sentiel) |
 | **Aegis** | Network egress & attestation | [rShetty/Aegis](https://github.com/rShetty/Aegis) |
+| **Argus** | Human/agent OIDC identity provider | [rShetty/argus](https://github.com/rShetty/argus) |
+| **Forge** | Supply chain trust & package signing | [rShetty/forge](https://github.com/rShetty/forge) |
+| **Governance Hub** | Unified admin console and sole product UI | [rShetty/governance-hub](https://github.com/rShetty/governance-hub) |
 
 When an agent is registered in Hive, it's automatically registered with
 Patroclus (creating a principal, agent identity, and default authorization
 policy). Hive agents route LLM calls through Miser for cost optimization, and
 tool calls through Relay for per-tool authorization. All events flow to Sentiel
 for observability and compliance. Aegis enforces network egress policies.
+
+Hive's MCP registry supports OAuth server installs using either **DCR** or
+pre-registered **CIMD** credentials. CIMD credentials take precedence when
+present; DCR is used for providers that advertise a registration endpoint.
 
 Enable ecosystem integration in Hive's `.env`:
 ```env
